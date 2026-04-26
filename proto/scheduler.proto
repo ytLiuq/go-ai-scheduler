@@ -1,0 +1,84 @@
+syntax = "proto3";
+
+package scheduler.v1;
+
+option go_package = "github.com/example/go-ai-scheduler/proto/gen/scheduler/v1;schedulerv1";
+
+service WorkerControlService {
+  rpc RegisterWorker(RegisterWorkerRequest) returns (RegisterWorkerResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc DispatchTask(DispatchTaskRequest) returns (DispatchTaskResponse);
+  rpc AckTask(AckTaskRequest) returns (AckTaskResponse);
+  rpc ReportTaskStatus(ReportTaskStatusRequest) returns (ReportTaskStatusResponse);
+  rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
+}
+
+message RegisterWorkerRequest {
+  string worker_id = 1;
+  string hostname = 2;
+  string ip = 3;
+  int32 max_concurrency = 4;
+  map<string, string> labels = 5;
+}
+
+message RegisterWorkerResponse {
+  bool accepted = 1;
+  string message = 2;
+}
+
+message HeartbeatRequest {
+  string worker_id = 1;
+  int32 current_load = 2;
+  int32 running_tasks = 3;
+  int64 report_unix_seconds = 4;
+}
+
+message HeartbeatResponse {
+  bool ok = 1;
+}
+
+message DispatchTaskRequest {
+  string schedule_instance_id = 1;
+  int64 task_id = 2;
+  string task_type = 3;
+  string payload = 4;
+  int32 timeout_seconds = 5;
+  int32 retry_count = 6;
+}
+
+message DispatchTaskResponse {
+  bool accepted = 1;
+  string message = 2;
+}
+
+message AckTaskRequest {
+  string schedule_instance_id = 1;
+  string worker_id = 2;
+}
+
+message AckTaskResponse {
+  bool ok = 1;
+}
+
+message ReportTaskStatusRequest {
+  string schedule_instance_id = 1;
+  string worker_id = 2;
+  string status = 3;
+  string error_code = 4;
+  string error_message = 5;
+  int64 finished_unix_seconds = 6;
+}
+
+message ReportTaskStatusResponse {
+  bool ok = 1;
+}
+
+message CancelTaskRequest {
+  string schedule_instance_id = 1;
+  string reason = 2;
+}
+
+message CancelTaskResponse {
+  bool ok = 1;
+}
+
