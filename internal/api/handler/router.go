@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/example/go-ai-scheduler/internal/pkg/metrics"
+	"github.com/example/go-ai-scheduler/internal/tenant"
 )
 
 // NewSchedulerRouter wires internal scheduler-facing routes.
@@ -26,7 +27,10 @@ func NewAPIRouter(workerHandler *WorkerHandler, taskHandler *TaskHandler, taskIn
 	mux.HandleFunc("/api/v1/workers/", workerHandler.Get)
 	mux.HandleFunc("/api/v1/tasks", taskHandler.List)
 	mux.HandleFunc("/api/v1/tasks/", taskHandler.GetOrUpdate)
+	mux.HandleFunc("POST /api/v1/tasks/{id}/pause", taskHandler.Pause)
+	mux.HandleFunc("POST /api/v1/tasks/{id}/resume", taskHandler.Resume)
+	mux.HandleFunc("POST /api/v1/tasks/{id}/trigger", taskHandler.Trigger)
 	mux.HandleFunc("/api/v1/task-instances", taskInstanceHandler.List)
 	mux.HandleFunc("/api/v1/task-instances/", taskInstanceHandler.Get)
-	return metrics.Instrument("api", mux)
+	return metrics.Instrument("api", tenant.Middleware(mux))
 }

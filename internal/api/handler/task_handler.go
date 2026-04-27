@@ -41,6 +41,63 @@ func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, task)
 }
 
+// Pause suspends task scheduling.
+func (h *TaskHandler) Pause(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, r.Method)
+		return
+	}
+	id, err := parseTaskID(r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid task id"})
+		return
+	}
+	task, err := h.service.PauseTask(r.Context(), id)
+	if err != nil {
+		writeTaskServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, task)
+}
+
+// Resume re-enables task scheduling.
+func (h *TaskHandler) Resume(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, r.Method)
+		return
+	}
+	id, err := parseTaskID(r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid task id"})
+		return
+	}
+	task, err := h.service.ResumeTask(r.Context(), id)
+	if err != nil {
+		writeTaskServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, task)
+}
+
+// Trigger forces a one-off execution.
+func (h *TaskHandler) Trigger(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, r.Method)
+		return
+	}
+	id, err := parseTaskID(r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid task id"})
+		return
+	}
+	task, err := h.service.TriggerTask(r.Context(), id)
+	if err != nil {
+		writeTaskServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, task)
+}
+
 // List handles task listing.
 func (h *TaskHandler) List(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
@@ -109,6 +166,10 @@ func writeTaskServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, service.ErrTaskNameRequired), errors.Is(err, service.ErrTaskTypeRequired), errors.Is(err, service.ErrTaskIDRequired), errors.Is(err, service.ErrInvalidCronExpr):
 		status = http.StatusBadRequest
+	case errors.Is(err, service.ErrTaskNotEnabled):
+		status = http.StatusConflict
+	case errors.Is(err, service.ErrTaskNotOwned):
+		status = http.StatusForbidden
 	case strings.Contains(err.Error(), "not found"):
 		status = http.StatusNotFound
 	}

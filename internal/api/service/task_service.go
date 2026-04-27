@@ -3,10 +3,13 @@ package service
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/example/go-ai-scheduler/internal/audit"
 	"github.com/example/go-ai-scheduler/internal/model"
+	"github.com/example/go-ai-scheduler/internal/tenant"
 	"github.com/example/go-ai-scheduler/internal/pkg/cronexpr"
 	"github.com/example/go-ai-scheduler/internal/pkg/metrics"
 	"github.com/example/go-ai-scheduler/internal/repo"
@@ -17,6 +20,8 @@ var (
 	ErrTaskTypeRequired = errors.New("task type is required")
 	ErrTaskIDRequired   = errors.New("task id is required")
 	ErrInvalidCronExpr  = errors.New("invalid cron expression")
+	ErrTaskNotEnabled   = errors.New("task is not enabled")
+	ErrTaskNotOwned     = errors.New("task does not belong to this tenant")
 )
 
 // TaskUpsertRequest contains task create and update input.
@@ -29,19 +34,47 @@ type TaskUpsertRequest struct {
 	TimeoutSeconds  int       `json:"timeout_seconds"`
 	MaxRetry        int       `json:"max_retry"`
 	RetryPolicy     string    `json:"retry_policy"`
-	RouteStrategy   string    `json:"route_strategy"`
-	NextTriggerTime time.Time `json:"next_trigger_time"`
+	RetryOnErrors   string            `json:"retry_on_errors"`
+	RouteStrategy   string            `json:"route_strategy"`
+	Labels          map[string]string `json:"labels"`
+	NextTriggerTime time.Time         `json:"next_trigger_time"`
 	TenantID        int64     `json:"tenant_id"`
 }
 
 // TaskService manages task definitions.
 type TaskService struct {
-	repo repo.TaskRepository
+	repo    repo.TaskRepository
+	auditor *audit.Auditor
 }
 
 // NewTaskService creates a TaskService.
-func NewTaskService(repo repo.TaskRepository) *TaskService {
-	return &TaskService{repo: repo}
+func NewTaskService(repo repo.TaskRepository, auditor *audit.Auditor) *TaskService {
+	return &TaskService{repo: repo, auditor: auditor}
+}
+
+func (s *TaskService) audit(ctx context.Context, action string, id int64, detail string) {
+	if s.auditor == nil {
+		return
+	}
+	s.auditor.Record(ctx, audit.Entry{
+		Action:       action,
+		ResourceType: "task",
+		ResourceID:   strconv.FormatInt(id, 10),
+		Detail:       detail,
+	})
+}
+
+func (s *TaskService) auditErr(ctx context.Context, action string, id int64, err error) {
+	if s.auditor == nil {
+		return
+	}
+	s.auditor.Record(ctx, audit.Entry{
+		Action:       action,
+		ResourceType: "task",
+		ResourceID:   strconv.FormatInt(id, 10),
+		Detail:       err.Error(),
+		Result:       "error",
+	})
 }
 
 // CreateTask validates and stores a new task.
@@ -50,10 +83,14 @@ func (s *TaskService) CreateTask(ctx context.Context, req TaskUpsertRequest) (*m
 	if err != nil {
 		return nil, err
 	}
+	if task.TenantID == 0 {
+		task.TenantID = tenant.FromContext(ctx)
+	}
 	if err := s.repo.CreateTask(ctx, task); err != nil {
 		return nil, err
 	}
 	metrics.DefaultRegistry.IncCounter("tasks_mutations_total", map[string]string{"action": "create"})
+	s.audit(ctx, "task.create", task.ID, task.Name)
 	return task, nil
 }
 
@@ -64,6 +101,9 @@ func (s *TaskService) UpdateTask(ctx context.Context, id int64, req TaskUpsertRe
 	}
 	current, err := s.repo.GetTask(ctx, id)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.checkTenant(ctx, current); err != nil {
 		return nil, err
 	}
 
@@ -87,32 +127,136 @@ func (s *TaskService) UpdateTask(ctx context.Context, id int64, req TaskUpsertRe
 		return nil, err
 	}
 	metrics.DefaultRegistry.IncCounter("tasks_mutations_total", map[string]string{"action": "update"})
+	s.audit(ctx, "task.update", task.ID, task.Name)
 	return task, nil
 }
 
-// DeleteTask removes one task.
+// DeleteTask removes one task, enforcing tenant ownership.
 func (s *TaskService) DeleteTask(ctx context.Context, id int64) error {
 	if id <= 0 {
 		return ErrTaskIDRequired
+	}
+	task, err := s.repo.GetTask(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := s.checkTenant(ctx, task); err != nil {
+		return err
 	}
 	if err := s.repo.DeleteTask(ctx, id); err != nil {
 		return err
 	}
 	metrics.DefaultRegistry.IncCounter("tasks_mutations_total", map[string]string{"action": "delete"})
+	s.audit(ctx, "task.delete", id, "")
 	return nil
 }
 
-// GetTask returns one task.
+// PauseTask sets a task status to disabled so it is no longer triggered.
+func (s *TaskService) PauseTask(ctx context.Context, id int64) (*model.Task, error) {
+	if id <= 0 {
+		return nil, ErrTaskIDRequired
+	}
+	task, err := s.repo.GetTask(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.checkTenant(ctx, task); err != nil {
+		return nil, err
+	}
+	task.Status = "disabled"
+	if err := s.repo.UpdateTask(ctx, task); err != nil {
+		return nil, err
+	}
+	metrics.DefaultRegistry.IncCounter("tasks_mutations_total", map[string]string{"action": "pause"})
+	s.audit(ctx, "task.pause", id, task.Name)
+	return task, nil
+}
+
+// ResumeTask re-enables a disabled task and recalculates the next trigger time.
+func (s *TaskService) ResumeTask(ctx context.Context, id int64) (*model.Task, error) {
+	if id <= 0 {
+		return nil, ErrTaskIDRequired
+	}
+	task, err := s.repo.GetTask(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.checkTenant(ctx, task); err != nil {
+		return nil, err
+	}
+	task.Status = "enabled"
+	if task.CronExpr != "" {
+		nextTrigger, nextErr := cronexpr.NextAfter(time.Now(), task.CronExpr)
+		if nextErr != nil {
+			return nil, ErrInvalidCronExpr
+		}
+		task.NextTriggerTime = nextTrigger
+	}
+	if err := s.repo.UpdateTask(ctx, task); err != nil {
+		return nil, err
+	}
+	metrics.DefaultRegistry.IncCounter("tasks_mutations_total", map[string]string{"action": "resume"})
+	s.audit(ctx, "task.resume", id, task.Name)
+	return task, nil
+}
+
+// TriggerTask forces a one-off execution by setting the next trigger time to the past,
+// causing the scheduler to pick it up on the next scan.
+func (s *TaskService) TriggerTask(ctx context.Context, id int64) (*model.Task, error) {
+	if id <= 0 {
+		return nil, ErrTaskIDRequired
+	}
+	task, err := s.repo.GetTask(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.checkTenant(ctx, task); err != nil {
+		return nil, err
+	}
+	if task.Status != "enabled" {
+		return nil, ErrTaskNotEnabled
+	}
+	task.NextTriggerTime = time.Now().Add(-time.Second)
+	if err := s.repo.UpdateTask(ctx, task); err != nil {
+		return nil, err
+	}
+	metrics.DefaultRegistry.IncCounter("tasks_mutations_total", map[string]string{"action": "trigger"})
+	s.audit(ctx, "task.trigger", id, task.Name)
+	return task, nil
+}
+
+// GetTask returns one task, enforcing tenant ownership.
 func (s *TaskService) GetTask(ctx context.Context, id int64) (*model.Task, error) {
 	if id <= 0 {
 		return nil, ErrTaskIDRequired
 	}
-	return s.repo.GetTask(ctx, id)
+	task, err := s.repo.GetTask(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.checkTenant(ctx, task); err != nil {
+		return nil, err
+	}
+	return task, nil
 }
 
-// ListTasks returns all tasks.
+// ListTasks returns all tasks, optionally filtered by tenant.
 func (s *TaskService) ListTasks(ctx context.Context) ([]*model.Task, error) {
+	if tid := tenant.FromContext(ctx); tid != 0 {
+		return s.repo.ListTasksByTenant(ctx, tid)
+	}
 	return s.repo.ListTasks(ctx)
+}
+
+func (s *TaskService) checkTenant(ctx context.Context, task *model.Task) error {
+	tid := tenant.FromContext(ctx)
+	if tid == 0 || task.TenantID == 0 {
+		return nil
+	}
+	if task.TenantID != tid {
+		return ErrTaskNotOwned
+	}
+	return nil
 }
 
 func buildTask(id int64, req TaskUpsertRequest) (*model.Task, error) {
@@ -160,7 +304,9 @@ func buildTask(id int64, req TaskUpsertRequest) (*model.Task, error) {
 		TimeoutSeconds:  req.TimeoutSeconds,
 		MaxRetry:        req.MaxRetry,
 		RetryPolicy:     req.RetryPolicy,
+		RetryOnErrors:   req.RetryOnErrors,
 		RouteStrategy:   req.RouteStrategy,
+		Labels:          model.EncodeLabels(req.Labels),
 		NextTriggerTime: req.NextTriggerTime,
 		TenantID:        req.TenantID,
 	}, nil
