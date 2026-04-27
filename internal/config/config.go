@@ -1,21 +1,27 @@
 package config
 
-import "os"
+import (
+	"os"
+	"strconv"
+	"strings"
+)
 
 // Config contains bootstrap settings shared by all services.
 type Config struct {
-	ServiceName  string
-	HTTPAddr     string
-	GRPCAddr     string
-	SchedulerURL string
+	ServiceName       string
+	HTTPAddr          string
+	GRPCAddr          string
+	SchedulerURL      string
 	SchedulerGRPCAddr string
-	MySQLDSN     string
-	RedisAddr    string
-	EtcdAddrs    []string
-	RepoBackend  string
-	MigrationDir string
-	AutoMigrate  bool
-	InternalProtocol string
+	MySQLDSN          string
+	RedisAddr         string
+	AlertWebhookURL   string
+	MaxPending        int
+	EtcdAddrs         []string
+	RepoBackend       string
+	MigrationDir      string
+	AutoMigrate       bool
+	InternalProtocol  string
 }
 
 // Default returns a minimal bootstrap config for local development.
@@ -31,7 +37,8 @@ func Default(serviceName string) Config {
 		EtcdAddrs:    []string{"127.0.0.1:2379"},
 		RepoBackend:  "memory",
 		MigrationDir: "migrations",
-		AutoMigrate:  false,
+		MaxPending:    1000,
+		AutoMigrate:   false,
 		InternalProtocol: "http",
 	}
 	switch serviceName {
@@ -72,5 +79,26 @@ func Default(serviceName string) Config {
 	if value := os.Getenv("INTERNAL_PROTOCOL"); value != "" {
 		cfg.InternalProtocol = value
 	}
+	if value := os.Getenv("ETCD_ENDPOINTS"); value != "" {
+		cfg.EtcdAddrs = splitEnv(value)
+	}
+	if value := os.Getenv("ALERT_WEBHOOK_URL"); value != "" {
+		cfg.AlertWebhookURL = value
+	}
+	if value := os.Getenv("MAX_PENDING"); value != "" {
+		if n, err := strconv.Atoi(value); err == nil && n > 0 {
+			cfg.MaxPending = n
+		}
+	}
 	return cfg
+}
+
+func splitEnv(value string) []string {
+	parts := make([]string, 0)
+	for _, s := range strings.Split(value, ",") {
+		if trimmed := strings.TrimSpace(s); trimmed != "" {
+			parts = append(parts, trimmed)
+		}
+	}
+	return parts
 }

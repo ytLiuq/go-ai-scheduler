@@ -8,7 +8,7 @@ import (
 )
 
 func TestLocalElectorAcquire(t *testing.T) {
-	elector := New(nil, logger.New("test-leader"))
+	elector := New(nil, nil, logger.New("test-leader"))
 	if err := elector.Acquire(context.Background()); err != nil {
 		t.Fatalf("acquire leader: %v", err)
 	}
