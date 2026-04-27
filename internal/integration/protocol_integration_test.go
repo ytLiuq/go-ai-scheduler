@@ -260,6 +260,93 @@ func TestHTTPInternalProtocolRetryThenSuccess(t *testing.T) {
 	waitForRetrySuccess(t, instanceRepo)
 }
 
+func TestGRPCInternalProtocolRetryThenSuccess(t *testing.T) {
+	t.Parallel()
+
+	taskRepo := memory.NewTaskRepository()
+	instanceRepo := memory.NewTaskInstanceRepository()
+	workerRepo := memory.NewWorkerRepository()
+	logr := logger.New("test-grpc-retry")
+
+	router := route.NewRouter(workerRepo)
+	dispatcher := schedulerdispatch.NewClient()
+	workerService := apiservice.NewWorkerService(workerRepo)
+
+	schedulerLis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen scheduler grpc: %v", err)
+	}
+	defer schedulerLis.Close()
+
+	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, "", logr)
+	schedulerServer := grpc.NewServer()
+	schedulergrpc.Register(schedulerServer, schedulergrpc.NewServer(workerService, runtimeService))
+	go func() {
+		_ = schedulerServer.Serve(schedulerLis)
+	}()
+	defer schedulerServer.Stop()
+
+	var requestCount atomic.Int32
+	flakyTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requestCount.Add(1) == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer flakyTarget.Close()
+
+	reportClient := reporter.NewClient("grpc", schedulerLis.Addr().String())
+	workerHandler := workerapp.NewHandler("worker-grpc-retry-1", reportClient, logr)
+
+	workerLis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen worker grpc: %v", err)
+	}
+	defer workerLis.Close()
+
+	workerServer := grpc.NewServer()
+	workergrpc.Register(workerServer, workergrpc.NewServer(workerHandler))
+	go func() {
+		_ = workerServer.Serve(workerLis)
+	}()
+	defer workerServer.Stop()
+
+	heartbeatClient := heartbeat.NewClient("", schedulerLis.Addr().String(), "grpc")
+	err = heartbeatClient.Register(context.Background(), apiservice.WorkerRegistrationRequest{
+		WorkerID:       "worker-grpc-retry-1",
+		Hostname:       "worker-grpc-retry-host",
+		IP:             "127.0.0.1",
+		GRPCAddr:       workerLis.Addr().String(),
+		Protocol:       "grpc",
+		MaxConcurrency: 10,
+	})
+	if err != nil {
+		t.Fatalf("register worker over grpc: %v", err)
+	}
+
+	task := &model.Task{
+		Name:            "grpc-retry-task",
+		Type:            "http",
+		Payload:         flakyTarget.URL,
+		Status:          "enabled",
+		TimeoutSeconds:  5,
+		MaxRetry:        1,
+		RetryPolicy:     "fixed_interval",
+		RouteStrategy:   "round_robin",
+		NextTriggerTime: time.Now().Add(-time.Second),
+	}
+	if err := taskRepo.CreateTask(context.Background(), task); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	loopCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, "").Start(loopCtx)
+
+	waitForRetrySuccess(t, instanceRepo)
+}
+
 func waitForStatus(t *testing.T, instanceRepo *memory.TaskInstanceRepository, expected string) {
 	t.Helper()
 
