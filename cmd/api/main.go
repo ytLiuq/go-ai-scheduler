@@ -6,6 +6,7 @@ import (
 	"github.com/example/go-ai-scheduler/internal/app"
 	"github.com/example/go-ai-scheduler/internal/api/handler"
 	apiservice "github.com/example/go-ai-scheduler/internal/api/service"
+	"github.com/example/go-ai-scheduler/internal/audit"
 	"github.com/example/go-ai-scheduler/internal/config"
 	"github.com/example/go-ai-scheduler/internal/pkg/logger"
 )
@@ -17,7 +18,8 @@ func main() {
 	defer cleanup()
 
 	workerService := apiservice.NewWorkerService(resources.Repositories.Worker)
-	taskService := apiservice.NewTaskService(resources.Repositories.Task)
+	auditor := audit.New(l)
+	taskService := apiservice.NewTaskService(resources.Repositories.Task, auditor)
 	taskInstanceService := apiservice.NewTaskInstanceService(resources.Repositories.TaskInstance)
 
 	server := &http.Server{
