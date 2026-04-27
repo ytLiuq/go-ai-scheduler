@@ -117,6 +117,20 @@ func (r *TaskInstanceRepository) ListInstancesByStatus(_ context.Context, status
 	return instances, nil
 }
 
+// CountInstancesByStatus returns the count of instances with the given status.
+func (r *TaskInstanceRepository) CountInstancesByStatus(_ context.Context, status string) (int, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var count int
+	for _, instance := range r.instances {
+		if instance.Status == status {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // UpdateInstanceStatus updates only the status field.
 func (r *TaskInstanceRepository) UpdateInstanceStatus(_ context.Context, instanceID int64, status string) error {
 	r.mu.Lock()
@@ -149,6 +163,31 @@ func (r *TaskInstanceRepository) UpdateInstanceDispatch(_ context.Context, insta
 		}
 	}
 	return nil
+}
+
+// ListDueRetryInstances returns retry_waiting instances whose next_retry_time has passed.
+func (r *TaskInstanceRepository) ListDueRetryInstances(_ context.Context, cutoff time.Time, limit int) ([]*model.TaskInstance, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var instances []*model.TaskInstance
+	for _, instance := range r.instances {
+		if instance.Status != "retry_waiting" {
+			continue
+		}
+		if !instance.NextRetryTime.IsZero() && instance.NextRetryTime.After(cutoff) {
+			continue
+		}
+		copyInstance := *instance
+		instances = append(instances, &copyInstance)
+	}
+	sort.Slice(instances, func(i, j int) bool {
+		return instances[i].CreatedAt.Before(instances[j].CreatedAt)
+	})
+	if limit > 0 && len(instances) > limit {
+		instances = instances[:limit]
+	}
+	return instances, nil
 }
 
 // UpdateInstanceResult updates the final status and error fields.

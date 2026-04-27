@@ -24,8 +24,8 @@ func (r *TaskInstanceRepository) CreateInstance(ctx context.Context, instance *m
 	const query = `
 		INSERT INTO task_instance (
 			task_id, schedule_instance_id, trigger_time, dispatch_time, worker_id,
-			status, retry_count, error_code, error_message, trace_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			status, retry_count, error_code, error_message, trace_id, next_retry_time
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	result, err := r.db.ExecContext(ctx, query,
 		instance.TaskID,
@@ -38,6 +38,7 @@ func (r *TaskInstanceRepository) CreateInstance(ctx context.Context, instance *m
 		instance.ErrorCode,
 		instance.ErrorMessage,
 		instance.TraceID,
+		timeOrNull(instance.NextRetryTime),
 	)
 	if err != nil {
 		return fmt.Errorf("insert task instance: %w", err)
@@ -58,7 +59,7 @@ func (r *TaskInstanceRepository) CreateInstance(ctx context.Context, instance *m
 func (r *TaskInstanceRepository) GetInstance(ctx context.Context, instanceID int64) (*model.TaskInstance, error) {
 	const query = `
 		SELECT id, task_id, schedule_instance_id, trigger_time, dispatch_time, worker_id,
-		       status, retry_count, error_code, error_message, trace_id, created_at, updated_at
+		       status, retry_count, error_code, error_message, trace_id, next_retry_time, created_at, updated_at
 		FROM task_instance
 		WHERE id = ?
 	`
@@ -70,7 +71,7 @@ func (r *TaskInstanceRepository) GetInstance(ctx context.Context, instanceID int
 func (r *TaskInstanceRepository) GetInstanceByScheduleID(ctx context.Context, scheduleID string) (*model.TaskInstance, error) {
 	const query = `
 		SELECT id, task_id, schedule_instance_id, trigger_time, dispatch_time, worker_id,
-		       status, retry_count, error_code, error_message, trace_id, created_at, updated_at
+		       status, retry_count, error_code, error_message, trace_id, next_retry_time, created_at, updated_at
 		FROM task_instance
 		WHERE schedule_instance_id = ?
 	`
@@ -82,7 +83,7 @@ func (r *TaskInstanceRepository) GetInstanceByScheduleID(ctx context.Context, sc
 func (r *TaskInstanceRepository) ListInstances(ctx context.Context) ([]*model.TaskInstance, error) {
 	const query = `
 		SELECT id, task_id, schedule_instance_id, trigger_time, dispatch_time, worker_id,
-		       status, retry_count, error_code, error_message, trace_id, created_at, updated_at
+		       status, retry_count, error_code, error_message, trace_id, next_retry_time, created_at, updated_at
 		FROM task_instance
 		ORDER BY id
 	`
@@ -98,7 +99,7 @@ func (r *TaskInstanceRepository) ListInstances(ctx context.Context) ([]*model.Ta
 func (r *TaskInstanceRepository) ListInstancesByStatus(ctx context.Context, status string, limit int) ([]*model.TaskInstance, error) {
 	const query = `
 		SELECT id, task_id, schedule_instance_id, trigger_time, dispatch_time, worker_id,
-		       status, retry_count, error_code, error_message, trace_id, created_at, updated_at
+		       status, retry_count, error_code, error_message, trace_id, next_retry_time, created_at, updated_at
 		FROM task_instance
 		WHERE status = ?
 		ORDER BY created_at
@@ -110,6 +111,36 @@ func (r *TaskInstanceRepository) ListInstancesByStatus(ctx context.Context, stat
 	}
 	defer rows.Close()
 	return scanTaskInstances(rows)
+}
+
+// ListDueRetryInstances returns retry_waiting instances whose next_retry_time has passed.
+func (r *TaskInstanceRepository) ListDueRetryInstances(ctx context.Context, cutoff time.Time, limit int) ([]*model.TaskInstance, error) {
+	const query = `
+		SELECT id, task_id, schedule_instance_id, trigger_time, dispatch_time, worker_id,
+		       status, retry_count, error_code, error_message, trace_id, next_retry_time, created_at, updated_at
+		FROM task_instance
+		WHERE status = 'retry_waiting' AND (next_retry_time IS NULL OR next_retry_time <= ?)
+		ORDER BY created_at
+		LIMIT ?
+	`
+	rows, err := r.db.QueryContext(ctx, query, cutoff, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list due retry instances: %w", err)
+	}
+	defer rows.Close()
+	return scanTaskInstances(rows)
+}
+
+// CountInstancesByStatus returns the count of instances with the given status.
+func (r *TaskInstanceRepository) CountInstancesByStatus(ctx context.Context, status string) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM task_instance WHERE status = ?`, status,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count instances by status: %w", err)
+	}
+	return count, nil
 }
 
 // UpdateInstanceStatus updates only the status field.
@@ -155,6 +186,7 @@ func (r *TaskInstanceRepository) UpdateInstanceResult(ctx context.Context, sched
 func scanTaskInstance(scanner interface{ Scan(dest ...any) error }) (*model.TaskInstance, error) {
 	var instance model.TaskInstance
 	var dispatchTime sql.NullTime
+	var nextRetryTime sql.NullTime
 	if err := scanner.Scan(
 		&instance.ID,
 		&instance.TaskID,
@@ -167,6 +199,7 @@ func scanTaskInstance(scanner interface{ Scan(dest ...any) error }) (*model.Task
 		&instance.ErrorCode,
 		&instance.ErrorMessage,
 		&instance.TraceID,
+		&nextRetryTime,
 		&instance.CreatedAt,
 		&instance.UpdatedAt,
 	); err != nil {
@@ -174,6 +207,9 @@ func scanTaskInstance(scanner interface{ Scan(dest ...any) error }) (*model.Task
 	}
 	if dispatchTime.Valid {
 		instance.DispatchTime = dispatchTime.Time
+	}
+	if nextRetryTime.Valid {
+		instance.NextRetryTime = nextRetryTime.Time
 	}
 	return &instance, nil
 }

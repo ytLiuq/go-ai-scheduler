@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/example/go-ai-scheduler/internal/model"
 	"github.com/example/go-ai-scheduler/internal/rpc"
 	"github.com/example/go-ai-scheduler/internal/repo"
 	"github.com/example/go-ai-scheduler/internal/scheduler/dispatch"
@@ -64,7 +65,7 @@ func (l *Loop) Start(ctx context.Context) {
 }
 
 func (l *Loop) scan(ctx context.Context) {
-	instances, err := l.instances.ListInstancesByStatus(ctx, "retry_waiting", 100)
+	instances, err := l.instances.ListDueRetryInstances(ctx, time.Now(), 100)
 	if err != nil {
 		l.logger.Printf("list retry_waiting instances failed: %v", err)
 		return
@@ -77,7 +78,10 @@ func (l *Loop) scan(ctx context.Context) {
 			continue
 		}
 
-		worker, err := l.router.PickAndReserveWorker(ctx)
+		worker, err := l.router.Pick(ctx, route.SelectOptions{
+				Labels:   model.DecodeLabels(task.Labels),
+				Strategy: task.RouteStrategy,
+			})
 		if err != nil {
 			if err == route.ErrNoAvailableWorker {
 				return

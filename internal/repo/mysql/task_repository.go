@@ -23,8 +23,8 @@ func (r *TaskRepository) CreateTask(ctx context.Context, task *model.Task) error
 	const query = `
 		INSERT INTO task (
 			name, type, cron_expr, payload, status, timeout_seconds,
-			max_retry, retry_policy, route_strategy, next_trigger_time, tenant_id, version
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			max_retry, retry_policy, retry_on_errors, route_strategy, labels, next_trigger_time, tenant_id, version
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	result, err := r.db.ExecContext(ctx, query,
 		task.Name,
@@ -35,7 +35,9 @@ func (r *TaskRepository) CreateTask(ctx context.Context, task *model.Task) error
 		task.TimeoutSeconds,
 		task.MaxRetry,
 		task.RetryPolicy,
+		task.RetryOnErrors,
 		task.RouteStrategy,
+		task.Labels,
 		timeOrNull(task.NextTriggerTime),
 		task.TenantID,
 		1,
@@ -60,8 +62,8 @@ func (r *TaskRepository) UpdateTask(ctx context.Context, task *model.Task) error
 	const query = `
 		UPDATE task
 		SET name = ?, type = ?, cron_expr = ?, payload = ?, status = ?, timeout_seconds = ?,
-		    max_retry = ?, retry_policy = ?, route_strategy = ?, next_trigger_time = ?,
-		    tenant_id = ?, version = version + 1
+		    max_retry = ?, retry_policy = ?, retry_on_errors = ?, route_strategy = ?, labels = ?,
+		    next_trigger_time = ?, tenant_id = ?, version = version + 1
 		WHERE id = ?
 	`
 	_, err := r.db.ExecContext(ctx, query,
@@ -73,7 +75,9 @@ func (r *TaskRepository) UpdateTask(ctx context.Context, task *model.Task) error
 		task.TimeoutSeconds,
 		task.MaxRetry,
 		task.RetryPolicy,
+		task.RetryOnErrors,
 		task.RouteStrategy,
+		task.Labels,
 		timeOrNull(task.NextTriggerTime),
 		task.TenantID,
 		task.ID,
@@ -102,7 +106,7 @@ func (r *TaskRepository) DeleteTask(ctx context.Context, id int64) error {
 func (r *TaskRepository) GetTask(ctx context.Context, id int64) (*model.Task, error) {
 	const query = `
 		SELECT id, name, type, cron_expr, payload, status, timeout_seconds, max_retry,
-		       retry_policy, route_strategy, next_trigger_time, tenant_id, version,
+		       retry_policy, retry_on_errors, route_strategy, labels, next_trigger_time, tenant_id, version,
 		       created_at, updated_at
 		FROM task
 		WHERE id = ?
@@ -115,7 +119,7 @@ func (r *TaskRepository) GetTask(ctx context.Context, id int64) (*model.Task, er
 func (r *TaskRepository) ListTasks(ctx context.Context) ([]*model.Task, error) {
 	const query = `
 		SELECT id, name, type, cron_expr, payload, status, timeout_seconds, max_retry,
-		       retry_policy, route_strategy, next_trigger_time, tenant_id, version,
+		       retry_policy, retry_on_errors, route_strategy, labels, next_trigger_time, tenant_id, version,
 		       created_at, updated_at
 		FROM task
 		ORDER BY id
@@ -128,11 +132,29 @@ func (r *TaskRepository) ListTasks(ctx context.Context) ([]*model.Task, error) {
 	return scanTasks(rows)
 }
 
+// ListTasksByTenant loads tasks filtered by tenant.
+func (r *TaskRepository) ListTasksByTenant(ctx context.Context, tenantID int64) ([]*model.Task, error) {
+	const query = `
+		SELECT id, name, type, cron_expr, payload, status, timeout_seconds, max_retry,
+		       retry_policy, retry_on_errors, route_strategy, labels, next_trigger_time, tenant_id, version,
+		       created_at, updated_at
+		FROM task
+		WHERE tenant_id = ?
+		ORDER BY id
+	`
+	rows, err := r.db.QueryContext(ctx, query, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("list tasks by tenant: %w", err)
+	}
+	defer rows.Close()
+	return scanTasks(rows)
+}
+
 // ListDueTasks loads enabled tasks that should be triggered.
 func (r *TaskRepository) ListDueTasks(ctx context.Context, limit int) ([]*model.Task, error) {
 	const query = `
 		SELECT id, name, type, cron_expr, payload, status, timeout_seconds, max_retry,
-		       retry_policy, route_strategy, next_trigger_time, tenant_id, version,
+		       retry_policy, retry_on_errors, route_strategy, labels, next_trigger_time, tenant_id, version,
 		       created_at, updated_at
 		FROM task
 		WHERE status = 'enabled' AND next_trigger_time IS NOT NULL AND next_trigger_time <= NOW()
@@ -160,7 +182,9 @@ func scanTask(scanner interface{ Scan(dest ...any) error }) (*model.Task, error)
 		&task.TimeoutSeconds,
 		&task.MaxRetry,
 		&task.RetryPolicy,
+		&task.RetryOnErrors,
 		&task.RouteStrategy,
+		&task.Labels,
 		&nextTrigger,
 		&task.TenantID,
 		&task.Version,

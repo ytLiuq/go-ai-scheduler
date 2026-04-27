@@ -13,7 +13,9 @@ type Task struct {
 	TimeoutSeconds  int
 	MaxRetry        int
 	RetryPolicy     string
+	RetryOnErrors   string
 	RouteStrategy   string
+	Labels          string
 	NextTriggerTime time.Time
 	TenantID        int64
 	Version         int64

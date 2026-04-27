@@ -1,0 +1,3 @@
+ALTER TABLE task ADD COLUMN retry_on_errors VARCHAR(256) NOT NULL DEFAULT '';
+
+ALTER TABLE task_instance ADD COLUMN next_retry_time DATETIME NULL;

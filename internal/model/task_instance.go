@@ -14,6 +14,7 @@ type TaskInstance struct {
 	RetryCount         int
 	ErrorCode          string
 	ErrorMessage       string
+	NextRetryTime      time.Time
 	TraceID            string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
