@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
+	"github.com/example/go-ai-scheduler/internal/alert"
 	"github.com/example/go-ai-scheduler/internal/model"
 	"github.com/example/go-ai-scheduler/internal/pkg/metrics"
 	"github.com/example/go-ai-scheduler/internal/repo"
@@ -33,6 +35,7 @@ type TaskRuntimeService struct {
 	workers      repo.WorkerRepository
 	router       *route.Router
 	dispatch     *dispatch.Client
+	alerter      *alert.Alerter
 	logger       *log.Logger
 	schedulerURL string
 }
@@ -44,6 +47,7 @@ func NewTaskRuntimeService(
 	workers repo.WorkerRepository,
 	router *route.Router,
 	dispatcher *dispatch.Client,
+	alerter *alert.Alerter,
 	schedulerURL string,
 	logger *log.Logger,
 ) *TaskRuntimeService {
@@ -53,6 +57,7 @@ func NewTaskRuntimeService(
 		workers:      workers,
 		router:       router,
 		dispatch:     dispatcher,
+		alerter:      alerter,
 		logger:       logger,
 		schedulerURL: schedulerURL,
 	}
@@ -76,6 +81,10 @@ func (s *TaskRuntimeService) ReportStatus(ctx context.Context, req TaskStatusRep
 		return err
 	}
 	metrics.DefaultRegistry.IncCounter("task_runtime_reports_total", map[string]string{"status": req.Status})
+	if req.Status == "running" {
+		s.logger.Printf("task running schedule_instance_id=%s worker_id=%s", req.ScheduleInstanceID, req.WorkerID)
+		return nil
+	}
 	if req.WorkerID == "" {
 		return s.retryIfNeeded(ctx, instance, req)
 	}
@@ -104,26 +113,59 @@ func (s *TaskRuntimeService) retryIfNeeded(ctx context.Context, instance *model.
 	if instance.RetryCount >= task.MaxRetry {
 		s.logger.Printf("retry skipped task_id=%d schedule_instance_id=%s retry_count=%d max_retry=%d",
 			task.ID, instance.ScheduleInstanceID, instance.RetryCount, task.MaxRetry)
+		if s.alerter != nil {
+			s.alerter.Send(ctx, alert.Payload{
+				TaskID:             task.ID,
+				TaskName:           task.Name,
+				InstanceID:         instance.ID,
+				ScheduleInstanceID: instance.ScheduleInstanceID,
+				RetryCount:         instance.RetryCount,
+				MaxRetry:           task.MaxRetry,
+				ErrorCode:          req.ErrorCode,
+				ErrorMessage:       req.ErrorMessage,
+			})
+		}
+		return nil
+	}
+	if !shouldRetryOnErrors(task.RetryPolicy, task.RetryOnErrors, req.ErrorCode) {
+		s.logger.Printf("retry skipped by error_code policy task_id=%d schedule_instance_id=%s error_code=%s",
+			task.ID, instance.ScheduleInstanceID, req.ErrorCode)
 		return nil
 	}
 
+	retryCount := instance.RetryCount + 1
 	retryInstance := &model.TaskInstance{
 		TaskID:             task.ID,
-		ScheduleInstanceID: retryScheduleInstanceID(task.ID, instance.RetryCount+1),
+		ScheduleInstanceID: retryScheduleInstanceID(task.ID, retryCount),
 		TriggerTime:        time.Now(),
 		Status:             "pending",
-		RetryCount:         instance.RetryCount + 1,
+		RetryCount:         retryCount,
 	}
+
+	if delay := retryDelay(task.RetryPolicy, retryCount); delay > 0 {
+		retryInstance.Status = "retry_waiting"
+		retryInstance.NextRetryTime = time.Now().Add(delay)
+		if err := s.instances.CreateInstance(ctx, retryInstance); err != nil {
+			return err
+		}
+		s.logger.Printf("retry deferred task_id=%d retry_instance_id=%d retry_count=%d delay=%v",
+			task.ID, retryInstance.ID, retryCount, delay)
+		return nil
+	}
+
 	if err := s.instances.CreateInstance(ctx, retryInstance); err != nil {
 		return err
 	}
 
-	worker, err := s.router.PickAndReserveWorker(ctx)
+	worker, err := s.router.Pick(ctx, route.SelectOptions{
+		Labels:   model.DecodeLabels(task.Labels),
+		Strategy: task.RouteStrategy,
+	})
 	if err != nil {
 		if err == route.ErrNoAvailableWorker {
 			_ = s.instances.UpdateInstanceStatus(ctx, retryInstance.ID, "retry_waiting")
 			s.logger.Printf("retry waiting for worker task_id=%d retry_instance_id=%d retry_count=%d",
-				task.ID, retryInstance.ID, retryInstance.RetryCount)
+				task.ID, retryInstance.ID, retryCount)
 			return nil
 		}
 		return err
@@ -140,7 +182,7 @@ func (s *TaskRuntimeService) retryIfNeeded(ctx context.Context, instance *model.
 		TaskType:           task.Type,
 		Payload:            task.Payload,
 		TimeoutSeconds:     task.TimeoutSeconds,
-		RetryCount:         retryInstance.RetryCount,
+		RetryCount:         retryCount,
 		SchedulerURL:       s.schedulerURL,
 	}); err != nil {
 		_ = s.instances.UpdateInstanceStatus(ctx, retryInstance.ID, "retry_waiting")
@@ -151,8 +193,33 @@ func (s *TaskRuntimeService) retryIfNeeded(ctx context.Context, instance *model.
 	}
 
 	s.logger.Printf("retry dispatched task_id=%d retry_instance_id=%d retry_count=%d worker_id=%s",
-		task.ID, retryInstance.ID, retryInstance.RetryCount, worker.ID)
+		task.ID, retryInstance.ID, retryCount, worker.ID)
 	return nil
+}
+
+func retryDelay(retryPolicy string, retryCount int) time.Duration {
+	switch retryPolicy {
+	case "exponential_backoff":
+		d := time.Duration(1<<retryCount) * time.Second
+		if d > 10*time.Minute {
+			d = 10 * time.Minute
+		}
+		return d
+	default:
+		return 0
+	}
+}
+
+func shouldRetryOnErrors(retryPolicy, retryOnErrors, errorCode string) bool {
+	if retryPolicy != "error_code" || retryOnErrors == "" {
+		return true
+	}
+	for _, code := range strings.Split(retryOnErrors, ",") {
+		if strings.TrimSpace(code) == errorCode {
+			return true
+		}
+	}
+	return false
 }
 
 func retryScheduleInstanceID(taskID int64, retryCount int) string {

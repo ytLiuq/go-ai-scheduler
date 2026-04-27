@@ -67,6 +67,16 @@ func (h *Handler) run(req rpc.ExecuteTaskRequest) {
 	h.running.Add(1)
 	defer h.running.Add(-1)
 
+	// Report running status before starting execution.
+	runningReq := apiservice.TaskStatusReportRequest{
+		ScheduleInstanceID: req.ScheduleInstanceID,
+		WorkerID:           h.workerID,
+		Status:             "running",
+	}
+	if err := h.reporter.Report(context.Background(), req.SchedulerURL, runningReq); err != nil {
+		h.logger.Printf("report running status failed schedule_instance_id=%s err=%v", req.ScheduleInstanceID, err)
+	}
+
 	timeout := time.Duration(req.TimeoutSeconds) * time.Second
 	if timeout <= 0 {
 		timeout = 300 * time.Second
