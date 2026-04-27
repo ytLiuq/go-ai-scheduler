@@ -3,19 +3,15 @@ package grpcserver
 import (
 	"context"
 
-	"github.com/example/go-ai-scheduler/internal/pkg/xgrpc"
+	schedulerv1 "github.com/example/go-ai-scheduler/proto/gen/scheduler/v1"
 	"github.com/example/go-ai-scheduler/internal/rpc"
 	workerapp "github.com/example/go-ai-scheduler/internal/worker"
 	"google.golang.org/grpc"
 )
 
-// ExecutorService is the gRPC-facing worker execution contract.
-type ExecutorService interface {
-	ExecuteTask(context.Context, rpc.ExecuteTaskRequest) (*xgrpc.AckResponse, error)
-}
-
-// Server exposes worker execution RPCs.
+// Server exposes worker execution RPCs to the scheduler.
 type Server struct {
+	schedulerv1.UnimplementedExecutorServiceServer
 	handler *workerapp.Handler
 }
 
@@ -24,32 +20,21 @@ func NewServer(handler *workerapp.Handler) *Server {
 	return &Server{handler: handler}
 }
 
-// Register binds worker RPC definitions.
+// Register binds the generated executor service stub to a gRPC server.
 func Register(s *grpc.Server, impl *Server) {
-	s.RegisterService(&grpc.ServiceDesc{
-		ServiceName: "worker.v1.ExecutorService",
-		HandlerType: (*ExecutorService)(nil),
-		Methods: []grpc.MethodDesc{
-			{
-				MethodName: "ExecuteTask",
-				Handler:    impl.handleExecuteTask,
-			},
-		},
-		Streams:  []grpc.StreamDesc{},
-		Metadata: "manual",
-	}, impl)
+	schedulerv1.RegisterExecutorServiceServer(s, impl)
 }
 
 // ExecuteTask accepts one dispatch RPC.
-func (s *Server) ExecuteTask(ctx context.Context, req rpc.ExecuteTaskRequest) (*xgrpc.AckResponse, error) {
-	s.handler.ExecuteAsync(ctx, req)
-	return &xgrpc.AckResponse{OK: true}, nil
-}
-
-func (s *Server) handleExecuteTask(_ any, ctx context.Context, dec func(any) error, _ grpc.UnaryServerInterceptor) (any, error) {
-	var req rpc.ExecuteTaskRequest
-	if err := dec(&req); err != nil {
-		return nil, err
-	}
-	return s.ExecuteTask(ctx, req)
+func (s *Server) ExecuteTask(ctx context.Context, req *schedulerv1.ExecuteTaskRequest) (*schedulerv1.ExecuteTaskResponse, error) {
+	s.handler.ExecuteAsync(ctx, rpc.ExecuteTaskRequest{
+		ScheduleInstanceID: req.GetScheduleInstanceId(),
+		TaskID:             req.GetTaskId(),
+		TaskType:           req.GetTaskType(),
+		Payload:            req.GetPayload(),
+		TimeoutSeconds:     int(req.GetTimeoutSeconds()),
+		RetryCount:         int(req.GetRetryCount()),
+		SchedulerURL:       req.GetSchedulerUrl(),
+	})
+	return &schedulerv1.ExecuteTaskResponse{Accepted: true}, nil
 }

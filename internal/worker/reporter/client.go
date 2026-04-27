@@ -10,38 +10,73 @@ import (
 	"time"
 
 	apiservice "github.com/example/go-ai-scheduler/internal/api/service"
-	"github.com/example/go-ai-scheduler/internal/rpc"
-	"github.com/example/go-ai-scheduler/internal/pkg/xgrpc"
+	schedulerv1 "github.com/example/go-ai-scheduler/proto/gen/scheduler/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // Client reports task execution results back to scheduler.
 type Client struct {
-	protocol   string
-	grpcAddr   string
-	httpClient *http.Client
+	protocol      string
+	httpClient    *http.Client
+	grpcConn      *grpc.ClientConn
+	controlClient schedulerv1.WorkerControlServiceClient
 }
 
 // NewClient creates a scheduler report client.
 func NewClient(protocol string, grpcAddr string) *Client {
-	return &Client{
-		protocol: strings.ToLower(strings.TrimSpace(protocol)),
-		grpcAddr: grpcAddr,
+	c := &Client{
+		protocol:   strings.ToLower(strings.TrimSpace(protocol)),
 		httpClient: &http.Client{Timeout: 3 * time.Second},
 	}
+	if c.protocol == "grpc" {
+		conn, err := grpc.Dial(grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			return c
+		}
+		c.grpcConn = conn
+		c.controlClient = schedulerv1.NewWorkerControlServiceClient(conn)
+	}
+	return c
+}
+
+// Close releases the underlying gRPC connection.
+func (c *Client) Close() error {
+	if c.grpcConn != nil {
+		return c.grpcConn.Close()
+	}
+	return nil
 }
 
 // Report sends one execution status update.
 func (c *Client) Report(ctx context.Context, schedulerURL string, req apiservice.TaskStatusReportRequest) error {
 	if c.protocol == "grpc" {
-		var resp xgrpc.AckResponse
-		if err := xgrpc.InvokeJSON(ctx, c.grpcAddr, rpc.ReportTaskStatusMethod, req, &resp); err != nil {
-			return err
-		}
-		if !resp.OK {
-			return fmt.Errorf("grpc status report rejected: %s", resp.Message)
-		}
-		return nil
+		return c.reportGRPC(ctx, req)
 	}
+	return c.reportHTTP(ctx, schedulerURL, req)
+}
+
+func (c *Client) reportGRPC(ctx context.Context, req apiservice.TaskStatusReportRequest) error {
+	if c.controlClient == nil {
+		return fmt.Errorf("grpc control client is not initialized")
+	}
+	resp, err := c.controlClient.ReportTaskStatus(ctx, &schedulerv1.ReportTaskStatusRequest{
+		ScheduleInstanceId: req.ScheduleInstanceID,
+		WorkerId:           req.WorkerID,
+		Status:             req.Status,
+		ErrorCode:          req.ErrorCode,
+		ErrorMessage:       req.ErrorMessage,
+	})
+	if err != nil {
+		return err
+	}
+	if !resp.GetOk() {
+		return fmt.Errorf("grpc status report rejected")
+	}
+	return nil
+}
+
+func (c *Client) reportHTTP(ctx context.Context, schedulerURL string, req apiservice.TaskStatusReportRequest) error {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("marshal status report: %w", err)

@@ -4,19 +4,13 @@ import (
 	"context"
 
 	"github.com/example/go-ai-scheduler/internal/api/service"
-	"github.com/example/go-ai-scheduler/internal/pkg/xgrpc"
+	schedulerv1 "github.com/example/go-ai-scheduler/proto/gen/scheduler/v1"
 	"google.golang.org/grpc"
 )
 
-// WorkerControlService is the gRPC-facing scheduler control contract.
-type WorkerControlService interface {
-	RegisterWorker(context.Context, service.WorkerRegistrationRequest) (*xgrpc.AckResponse, error)
-	Heartbeat(context.Context, service.WorkerHeartbeatRequest) (*xgrpc.AckResponse, error)
-	ReportTaskStatus(context.Context, service.TaskStatusReportRequest) (*xgrpc.AckResponse, error)
-}
-
-// Server exposes internal scheduler control RPCs.
+// Server exposes scheduler control RPCs to workers.
 type Server struct {
+	schedulerv1.UnimplementedWorkerControlServiceServer
 	workers *service.WorkerService
 	runtime *service.TaskRuntimeService
 }
@@ -26,74 +20,54 @@ func NewServer(workers *service.WorkerService, runtime *service.TaskRuntimeServi
 	return &Server{workers: workers, runtime: runtime}
 }
 
-// Register binds service descriptions to a gRPC server.
+// Register binds the generated service stub to a gRPC server.
 func Register(s *grpc.Server, impl *Server) {
-	s.RegisterService(&grpc.ServiceDesc{
-		ServiceName: "scheduler.v1.WorkerControlService",
-		HandlerType: (*WorkerControlService)(nil),
-		Methods: []grpc.MethodDesc{
-			{
-				MethodName: "RegisterWorker",
-				Handler:    impl.handleRegisterWorker,
-			},
-			{
-				MethodName: "Heartbeat",
-				Handler:    impl.handleHeartbeat,
-			},
-			{
-				MethodName: "ReportTaskStatus",
-				Handler:    impl.handleReportTaskStatus,
-			},
-		},
-		Streams:  []grpc.StreamDesc{},
-		Metadata: "manual",
-	}, impl)
+	schedulerv1.RegisterWorkerControlServiceServer(s, impl)
 }
 
 // RegisterWorker handles one registration RPC.
-func (s *Server) RegisterWorker(ctx context.Context, req service.WorkerRegistrationRequest) (*xgrpc.AckResponse, error) {
-	if _, err := s.workers.RegisterWorker(ctx, req); err != nil {
-		return &xgrpc.AckResponse{OK: false, Message: err.Error()}, nil
+func (s *Server) RegisterWorker(ctx context.Context, req *schedulerv1.RegisterWorkerRequest) (*schedulerv1.RegisterWorkerResponse, error) {
+	svcReq := service.WorkerRegistrationRequest{
+		WorkerID:       req.GetWorkerId(),
+		Hostname:       req.GetHostname(),
+		IP:             req.GetIp(),
+		CallbackURL:    req.GetCallbackUrl(),
+		GRPCAddr:       req.GetGrpcAddr(),
+		Protocol:       req.GetProtocol(),
+		MaxConcurrency: int(req.GetMaxConcurrency()),
+		Labels:         req.GetLabels(),
 	}
-	return &xgrpc.AckResponse{OK: true}, nil
+	if _, err := s.workers.RegisterWorker(ctx, svcReq); err != nil {
+		return &schedulerv1.RegisterWorkerResponse{Accepted: false, Message: err.Error()}, nil
+	}
+	return &schedulerv1.RegisterWorkerResponse{Accepted: true}, nil
 }
 
 // Heartbeat handles one heartbeat RPC.
-func (s *Server) Heartbeat(ctx context.Context, req service.WorkerHeartbeatRequest) (*xgrpc.AckResponse, error) {
-	if _, err := s.workers.Heartbeat(ctx, req); err != nil {
-		return &xgrpc.AckResponse{OK: false, Message: err.Error()}, nil
+func (s *Server) Heartbeat(ctx context.Context, req *schedulerv1.HeartbeatRequest) (*schedulerv1.HeartbeatResponse, error) {
+	svcReq := service.WorkerHeartbeatRequest{
+		WorkerID:        req.GetWorkerId(),
+		CurrentLoad:     int(req.GetCurrentLoad()),
+		RunningTasks:    int(req.GetRunningTasks()),
+		ReportUnixMilli: req.GetReportUnixMilli(),
 	}
-	return &xgrpc.AckResponse{OK: true}, nil
+	if _, err := s.workers.Heartbeat(ctx, svcReq); err != nil {
+		return &schedulerv1.HeartbeatResponse{Ok: false}, nil
+	}
+	return &schedulerv1.HeartbeatResponse{Ok: true}, nil
 }
 
 // ReportTaskStatus handles one runtime status RPC.
-func (s *Server) ReportTaskStatus(ctx context.Context, req service.TaskStatusReportRequest) (*xgrpc.AckResponse, error) {
-	if err := s.runtime.ReportStatus(ctx, req); err != nil {
-		return &xgrpc.AckResponse{OK: false, Message: err.Error()}, nil
+func (s *Server) ReportTaskStatus(ctx context.Context, req *schedulerv1.ReportTaskStatusRequest) (*schedulerv1.ReportTaskStatusResponse, error) {
+	svcReq := service.TaskStatusReportRequest{
+		ScheduleInstanceID: req.GetScheduleInstanceId(),
+		WorkerID:           req.GetWorkerId(),
+		Status:             req.GetStatus(),
+		ErrorCode:          req.GetErrorCode(),
+		ErrorMessage:       req.GetErrorMessage(),
 	}
-	return &xgrpc.AckResponse{OK: true}, nil
-}
-
-func (s *Server) handleRegisterWorker(_ any, ctx context.Context, dec func(any) error, _ grpc.UnaryServerInterceptor) (any, error) {
-	var req service.WorkerRegistrationRequest
-	if err := dec(&req); err != nil {
-		return nil, err
+	if err := s.runtime.ReportStatus(ctx, svcReq); err != nil {
+		return &schedulerv1.ReportTaskStatusResponse{Ok: false}, nil
 	}
-	return s.RegisterWorker(ctx, req)
-}
-
-func (s *Server) handleHeartbeat(_ any, ctx context.Context, dec func(any) error, _ grpc.UnaryServerInterceptor) (any, error) {
-	var req service.WorkerHeartbeatRequest
-	if err := dec(&req); err != nil {
-		return nil, err
-	}
-	return s.Heartbeat(ctx, req)
-}
-
-func (s *Server) handleReportTaskStatus(_ any, ctx context.Context, dec func(any) error, _ grpc.UnaryServerInterceptor) (any, error) {
-	var req service.TaskStatusReportRequest
-	if err := dec(&req); err != nil {
-		return nil, err
-	}
-	return s.ReportTaskStatus(ctx, req)
+	return &schedulerv1.ReportTaskStatusResponse{Ok: true}, nil
 }

@@ -13,7 +13,6 @@ import (
 	apiservice "github.com/example/go-ai-scheduler/internal/api/service"
 	"github.com/example/go-ai-scheduler/internal/model"
 	"github.com/example/go-ai-scheduler/internal/pkg/logger"
-	_ "github.com/example/go-ai-scheduler/internal/pkg/xgrpc"
 	"github.com/example/go-ai-scheduler/internal/repo/memory"
 	schedulerdispatch "github.com/example/go-ai-scheduler/internal/scheduler/dispatch"
 	schedulergrpc "github.com/example/go-ai-scheduler/internal/scheduler/grpcserver"
@@ -37,7 +36,7 @@ func TestHTTPInternalProtocolEndToEnd(t *testing.T) {
 	router := route.NewRouter(workerRepo)
 	dispatcher := schedulerdispatch.NewClient()
 	workerService := apiservice.NewWorkerService(workerRepo)
-	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, "", logr)
+	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, nil, "", logr)
 
 	schedulerServer := httptest.NewServer(handler.NewSchedulerRouter(
 		handler.NewWorkerHandler(workerService),
@@ -94,7 +93,7 @@ func TestHTTPInternalProtocolEndToEnd(t *testing.T) {
 
 	loopCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, schedulerServer.URL).Start(loopCtx)
+	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, schedulerServer.URL, 0).Start(loopCtx)
 
 	waitForStatus(t, instanceRepo, "success")
 }
@@ -110,7 +109,7 @@ func TestGRPCInternalProtocolEndToEnd(t *testing.T) {
 	router := route.NewRouter(workerRepo)
 	dispatcher := schedulerdispatch.NewClient()
 	workerService := apiservice.NewWorkerService(workerRepo)
-	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, "", logr)
+	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, nil, "", logr)
 
 	schedulerLis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -176,7 +175,7 @@ func TestGRPCInternalProtocolEndToEnd(t *testing.T) {
 
 	loopCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, "").Start(loopCtx)
+	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, "", 0).Start(loopCtx)
 
 	waitForStatus(t, instanceRepo, "success")
 }
@@ -197,7 +196,7 @@ func TestHTTPInternalProtocolRetryThenSuccess(t *testing.T) {
 		nil,
 	))
 	defer schedulerServer.Close()
-	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, schedulerServer.URL, logr)
+	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, nil, schedulerServer.URL, logr)
 	schedulerServer.Config.Handler = handler.NewSchedulerRouter(
 		handler.NewWorkerHandler(workerService),
 		handler.NewTaskRuntimeHandler(runtimeService),
@@ -255,7 +254,7 @@ func TestHTTPInternalProtocolRetryThenSuccess(t *testing.T) {
 
 	loopCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, schedulerServer.URL).Start(loopCtx)
+	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, schedulerServer.URL, 0).Start(loopCtx)
 
 	waitForRetrySuccess(t, instanceRepo)
 }
@@ -278,7 +277,7 @@ func TestGRPCInternalProtocolRetryThenSuccess(t *testing.T) {
 	}
 	defer schedulerLis.Close()
 
-	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, "", logr)
+	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, nil, "", logr)
 	schedulerServer := grpc.NewServer()
 	schedulergrpc.Register(schedulerServer, schedulergrpc.NewServer(workerService, runtimeService))
 	go func() {
@@ -342,7 +341,7 @@ func TestGRPCInternalProtocolRetryThenSuccess(t *testing.T) {
 
 	loopCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, "").Start(loopCtx)
+	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, "", 0).Start(loopCtx)
 
 	waitForRetrySuccess(t, instanceRepo)
 }
@@ -363,7 +362,7 @@ func TestHTTPInternalProtocolTimeoutRetryThenSuccess(t *testing.T) {
 		nil,
 	))
 	defer schedulerServer.Close()
-	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, schedulerServer.URL, logr)
+	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, nil, schedulerServer.URL, logr)
 	schedulerServer.Config.Handler = handler.NewSchedulerRouter(
 		handler.NewWorkerHandler(workerService),
 		handler.NewTaskRuntimeHandler(runtimeService),
@@ -420,7 +419,7 @@ func TestHTTPInternalProtocolTimeoutRetryThenSuccess(t *testing.T) {
 
 	loopCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, schedulerServer.URL).Start(loopCtx)
+	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, schedulerServer.URL, 0).Start(loopCtx)
 
 	waitForRetryStatusSuccess(t, instanceRepo, "timeout")
 }

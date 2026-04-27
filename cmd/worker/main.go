@@ -13,7 +13,6 @@ import (
 	"github.com/example/go-ai-scheduler/internal/config"
 	"github.com/example/go-ai-scheduler/internal/pkg/logger"
 	"github.com/example/go-ai-scheduler/internal/pkg/metrics"
-	_ "github.com/example/go-ai-scheduler/internal/pkg/xgrpc"
 	workerapp "github.com/example/go-ai-scheduler/internal/worker"
 	workergrpc "github.com/example/go-ai-scheduler/internal/worker/grpcserver"
 	"github.com/example/go-ai-scheduler/internal/worker/heartbeat"

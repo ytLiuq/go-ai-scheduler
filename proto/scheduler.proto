@@ -4,14 +4,23 @@ package scheduler.v1;
 
 option go_package = "github.com/example/go-ai-scheduler/proto/gen/scheduler/v1;schedulerv1";
 
+// --- Scheduler-side control service (called by workers) ---
+
 service WorkerControlService {
   rpc RegisterWorker(RegisterWorkerRequest) returns (RegisterWorkerResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
-  rpc DispatchTask(DispatchTaskRequest) returns (DispatchTaskResponse);
-  rpc AckTask(AckTaskRequest) returns (AckTaskResponse);
   rpc ReportTaskStatus(ReportTaskStatusRequest) returns (ReportTaskStatusResponse);
+  rpc AckTask(AckTaskRequest) returns (AckTaskResponse);
+}
+
+// --- Worker-side execution service (called by scheduler) ---
+
+service ExecutorService {
+  rpc ExecuteTask(ExecuteTaskRequest) returns (ExecuteTaskResponse);
   rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
 }
+
+// --- RegisterWorker ---
 
 message RegisterWorkerRequest {
   string worker_id = 1;
@@ -19,6 +28,9 @@ message RegisterWorkerRequest {
   string ip = 3;
   int32 max_concurrency = 4;
   map<string, string> labels = 5;
+  string callback_url = 6;
+  string grpc_addr = 7;
+  string protocol = 8;
 }
 
 message RegisterWorkerResponse {
@@ -26,39 +38,20 @@ message RegisterWorkerResponse {
   string message = 2;
 }
 
+// --- Heartbeat ---
+
 message HeartbeatRequest {
   string worker_id = 1;
   int32 current_load = 2;
   int32 running_tasks = 3;
-  int64 report_unix_seconds = 4;
+  int64 report_unix_milli = 4;
 }
 
 message HeartbeatResponse {
   bool ok = 1;
 }
 
-message DispatchTaskRequest {
-  string schedule_instance_id = 1;
-  int64 task_id = 2;
-  string task_type = 3;
-  string payload = 4;
-  int32 timeout_seconds = 5;
-  int32 retry_count = 6;
-}
-
-message DispatchTaskResponse {
-  bool accepted = 1;
-  string message = 2;
-}
-
-message AckTaskRequest {
-  string schedule_instance_id = 1;
-  string worker_id = 2;
-}
-
-message AckTaskResponse {
-  bool ok = 1;
-}
+// --- ReportTaskStatus ---
 
 message ReportTaskStatusRequest {
   string schedule_instance_id = 1;
@@ -73,6 +66,36 @@ message ReportTaskStatusResponse {
   bool ok = 1;
 }
 
+// --- ExecuteTask (scheduler → worker dispatch) ---
+
+message ExecuteTaskRequest {
+  string schedule_instance_id = 1;
+  int64 task_id = 2;
+  string task_type = 3;
+  string payload = 4;
+  int32 timeout_seconds = 5;
+  int32 retry_count = 6;
+  string scheduler_url = 7;
+}
+
+message ExecuteTaskResponse {
+  bool accepted = 1;
+  string message = 2;
+}
+
+// --- AckTask ---
+
+message AckTaskRequest {
+  string schedule_instance_id = 1;
+  string worker_id = 2;
+}
+
+message AckTaskResponse {
+  bool ok = 1;
+}
+
+// --- CancelTask ---
+
 message CancelTaskRequest {
   string schedule_instance_id = 1;
   string reason = 2;
@@ -81,4 +104,3 @@ message CancelTaskRequest {
 message CancelTaskResponse {
   bool ok = 1;
 }
-

@@ -6,4 +6,9 @@ dist/
 tmp/
 *.log
 coverage.out
+/ai-service
+/api
+/migrate
+/scheduler
+/worker
 
