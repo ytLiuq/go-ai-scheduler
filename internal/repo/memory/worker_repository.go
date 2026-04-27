@@ -67,6 +67,27 @@ func (r *WorkerRepository) ListWorkers(_ context.Context) ([]*model.WorkerNode, 
 	return workers, nil
 }
 
+// ListStaleWorkers returns online workers whose last heartbeat is before cutoff.
+func (r *WorkerRepository) ListStaleWorkers(_ context.Context, cutoff time.Time) ([]*model.WorkerNode, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var stale []*model.WorkerNode
+	for _, worker := range r.workers {
+		if worker.Status != "online" {
+			continue
+		}
+		if worker.LastHeartbeatAt.Before(cutoff) {
+			copyWorker := *worker
+			stale = append(stale, &copyWorker)
+		}
+	}
+	sort.Slice(stale, func(i, j int) bool {
+		return stale[i].ID < stale[j].ID
+	})
+	return stale, nil
+}
+
 // ListAvailableWorkers returns online workers that still have remaining capacity.
 func (r *WorkerRepository) ListAvailableWorkers(ctx context.Context) ([]*model.WorkerNode, error) {
 	workers, err := r.ListWorkers(ctx)

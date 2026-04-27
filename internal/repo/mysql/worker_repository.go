@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/example/go-ai-scheduler/internal/model"
 )
@@ -77,6 +78,22 @@ func (r *WorkerRepository) ListWorkers(ctx context.Context) ([]*model.WorkerNode
 	rows, err := r.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("list workers: %w", err)
+	}
+	defer rows.Close()
+	return scanWorkers(rows)
+}
+
+// ListStaleWorkers returns online workers whose last heartbeat is before cutoff.
+func (r *WorkerRepository) ListStaleWorkers(ctx context.Context, cutoff time.Time) ([]*model.WorkerNode, error) {
+	const query = `
+		SELECT id, hostname, ip, callback_url, grpc_addr, protocol, status, labels, max_concurrency, current_load, last_heartbeat_at
+		FROM worker_node
+		WHERE status = 'online' AND last_heartbeat_at < ?
+		ORDER BY id
+	`
+	rows, err := r.db.QueryContext(ctx, query, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("list stale workers: %w", err)
 	}
 	defer rows.Close()
 	return scanWorkers(rows)

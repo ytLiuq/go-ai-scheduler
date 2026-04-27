@@ -111,6 +111,26 @@ func (s *WorkerService) ListWorkers(ctx context.Context) ([]*model.WorkerNode, e
 	return s.repo.ListWorkers(ctx)
 }
 
+// EvictStaleWorkers marks online workers as offline when their heartbeat is older than timeout.
+// It returns the number of workers that were evicted.
+func (s *WorkerService) EvictStaleWorkers(ctx context.Context, timeout time.Duration) (int, error) {
+	cutoff := time.Now().Add(-timeout)
+	stale, err := s.repo.ListStaleWorkers(ctx, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	var count int
+	for _, w := range stale {
+		w.Status = "offline"
+		w.CurrentLoad = 0
+		if err := s.repo.UpsertWorker(ctx, w); err != nil {
+			return count, err
+		}
+		count++
+	}
+	return count, nil
+}
+
 func heartbeatTime(unixMilli int64) time.Time {
 	if unixMilli <= 0 {
 		return time.Now()

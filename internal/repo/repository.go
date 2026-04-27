@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"time"
 
 	"github.com/example/go-ai-scheduler/internal/model"
 )
@@ -13,6 +14,7 @@ type TaskRepository interface {
 	DeleteTask(ctx context.Context, id int64) error
 	GetTask(ctx context.Context, id int64) (*model.Task, error)
 	ListTasks(ctx context.Context) ([]*model.Task, error)
+	ListTasksByTenant(ctx context.Context, tenantID int64) ([]*model.Task, error)
 	ListDueTasks(ctx context.Context, limit int) ([]*model.Task, error)
 }
 
@@ -23,6 +25,8 @@ type TaskInstanceRepository interface {
 	GetInstanceByScheduleID(ctx context.Context, scheduleID string) (*model.TaskInstance, error)
 	ListInstances(ctx context.Context) ([]*model.TaskInstance, error)
 	ListInstancesByStatus(ctx context.Context, status string, limit int) ([]*model.TaskInstance, error)
+	ListDueRetryInstances(ctx context.Context, cutoff time.Time, limit int) ([]*model.TaskInstance, error)
+	CountInstancesByStatus(ctx context.Context, status string) (int, error)
 	UpdateInstanceStatus(ctx context.Context, instanceID int64, status string) error
 	UpdateInstanceDispatch(ctx context.Context, instanceID int64, workerID string, dispatchTime string) error
 	UpdateInstanceResult(ctx context.Context, scheduleID string, status string, errorCode string, errorMessage string) error
@@ -34,4 +38,5 @@ type WorkerRepository interface {
 	GetWorker(ctx context.Context, id string) (*model.WorkerNode, error)
 	ListWorkers(ctx context.Context) ([]*model.WorkerNode, error)
 	ListAvailableWorkers(ctx context.Context) ([]*model.WorkerNode, error)
+	ListStaleWorkers(ctx context.Context, cutoff time.Time) ([]*model.WorkerNode, error)
 }
