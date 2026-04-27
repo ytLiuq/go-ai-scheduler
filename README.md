@@ -53,9 +53,12 @@ The current local bootstrap implementation supports:
 - task CRUD over HTTP, including deletion
 - in-memory repositories for workers, tasks, and task instances
 - cron-based scheduling for `cron_expr` tasks via `next_trigger_time`
+- scheduler leader gating: local single-node mode by default, MySQL `GET_LOCK` when using the MySQL repository backend
 - a scheduler trigger loop that scans `next_trigger_time`, creates task instances, and assigns them to the least-loaded available worker
 - worker execution for `shell` and `http` task types
 - failure and timeout callback with centralized retry handling
+- `/metrics` endpoints on `scheduler`, `api`, `worker`, and `ai-service`
+- `ai-service` helper APIs for cron next-run calculation and log analysis
 
 ## Repository Backend
 
@@ -88,6 +91,7 @@ REPO_BACKEND=mysql go run ./cmd/migrate
 
 - `scheduler`: internal control plane, trigger loop, retry loop, worker registration, worker heartbeat, task runtime report
 - `api`: external management and query plane, including task CRUD, worker query, and task instance query
+- `ai-service`: auxiliary HTTP service exposing `/api/v1/cron/next` and `/api/v1/log-analysis/analyze`
 
 If you use `memory` repositories, `scheduler` and `api` do not share state across processes.
 For shared state across services, run both with `REPO_BACKEND=mysql`.
@@ -120,3 +124,7 @@ When `INTERNAL_PROTOCOL=grpc`, the worker will:
 - send heartbeat through scheduler gRPC
 - report execution result through scheduler gRPC
 - receive task dispatch through worker gRPC
+
+## Observability
+
+Each service exposes a plain-text Prometheus-style metrics endpoint at `/metrics`.
