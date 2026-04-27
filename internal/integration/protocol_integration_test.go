@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -180,6 +181,85 @@ func TestGRPCInternalProtocolEndToEnd(t *testing.T) {
 	waitForStatus(t, instanceRepo, "success")
 }
 
+func TestHTTPInternalProtocolRetryThenSuccess(t *testing.T) {
+	t.Parallel()
+
+	taskRepo := memory.NewTaskRepository()
+	instanceRepo := memory.NewTaskInstanceRepository()
+	workerRepo := memory.NewWorkerRepository()
+	logr := logger.New("test-http-retry")
+
+	router := route.NewRouter(workerRepo)
+	dispatcher := schedulerdispatch.NewClient()
+	workerService := apiservice.NewWorkerService(workerRepo)
+	schedulerServer := httptest.NewServer(handler.NewSchedulerRouter(
+		handler.NewWorkerHandler(workerService),
+		nil,
+	))
+	defer schedulerServer.Close()
+	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, schedulerServer.URL, logr)
+	schedulerServer.Config.Handler = handler.NewSchedulerRouter(
+		handler.NewWorkerHandler(workerService),
+		handler.NewTaskRuntimeHandler(runtimeService),
+	)
+
+	var requestCount atomic.Int32
+	flakyTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requestCount.Add(1) == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer flakyTarget.Close()
+
+	reportClient := reporter.NewClient("http", "")
+	workerHandler := workerapp.NewHandler("worker-http-retry-1", reportClient, logr)
+	workerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/internal/tasks/execute":
+			workerHandler.Execute(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer workerServer.Close()
+
+	heartbeatClient := heartbeat.NewClient(schedulerServer.URL, "", "http")
+	err := heartbeatClient.Register(context.Background(), apiservice.WorkerRegistrationRequest{
+		WorkerID:       "worker-http-retry-1",
+		Hostname:       "worker-http-retry-host",
+		IP:             "127.0.0.1",
+		CallbackURL:    workerServer.URL,
+		Protocol:       "http",
+		MaxConcurrency: 10,
+	})
+	if err != nil {
+		t.Fatalf("register worker over http: %v", err)
+	}
+
+	task := &model.Task{
+		Name:            "http-retry-task",
+		Type:            "http",
+		Payload:         flakyTarget.URL,
+		Status:          "enabled",
+		TimeoutSeconds:  5,
+		MaxRetry:        1,
+		RetryPolicy:     "fixed_interval",
+		RouteStrategy:   "round_robin",
+		NextTriggerTime: time.Now().Add(-time.Second),
+	}
+	if err := taskRepo.CreateTask(context.Background(), task); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	loopCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, schedulerServer.URL).Start(loopCtx)
+
+	waitForRetrySuccess(t, instanceRepo)
+}
+
 func waitForStatus(t *testing.T, instanceRepo *memory.TaskInstanceRepository, expected string) {
 	t.Helper()
 
@@ -199,4 +279,39 @@ func waitForStatus(t *testing.T, instanceRepo *memory.TaskInstanceRepository, ex
 
 	instances, _ := instanceRepo.ListInstances(context.Background())
 	t.Fatalf("did not observe instance status=%s, instances=%+v", expected, instances)
+}
+
+func waitForRetrySuccess(t *testing.T, instanceRepo *memory.TaskInstanceRepository) {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		instances, err := instanceRepo.ListInstances(context.Background())
+		if err != nil {
+			t.Fatalf("list instances: %v", err)
+		}
+
+		var failedFound bool
+		var successFound bool
+		var retrySuccessFound bool
+		for _, instance := range instances {
+			if instance.Status == "failed" && instance.RetryCount == 0 {
+				failedFound = true
+			}
+			if instance.Status == "success" {
+				successFound = true
+				if instance.RetryCount == 1 {
+					retrySuccessFound = true
+				}
+			}
+		}
+
+		if failedFound && successFound && retrySuccessFound && len(instances) >= 2 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	instances, _ := instanceRepo.ListInstances(context.Background())
+	t.Fatalf("did not observe failed->retry->success flow, instances=%+v", instances)
 }
