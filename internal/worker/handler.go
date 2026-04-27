@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"sync/atomic"
@@ -79,8 +80,13 @@ func (h *Handler) run(req rpc.ExecuteTaskRequest) {
 	}
 
 	if err := executor.Execute(ctx, req.TaskType, req.Payload); err != nil {
-		statusReq.Status = "failed"
-		statusReq.ErrorCode = "execute_failed"
+		if errors.Is(err, context.DeadlineExceeded) {
+			statusReq.Status = "timeout"
+			statusReq.ErrorCode = "timeout"
+		} else {
+			statusReq.Status = "failed"
+			statusReq.ErrorCode = "execute_failed"
+		}
 		statusReq.ErrorMessage = err.Error()
 		h.logger.Printf("task execution failed schedule_instance_id=%s err=%v", req.ScheduleInstanceID, err)
 	} else {

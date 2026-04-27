@@ -50,11 +50,12 @@ deployments/    deployment manifests
 The current local bootstrap implementation supports:
 
 - worker registration and heartbeat over HTTP
-- task CRUD over HTTP
+- task CRUD over HTTP, including deletion
 - in-memory repositories for workers, tasks, and task instances
+- cron-based scheduling for `cron_expr` tasks via `next_trigger_time`
 - a scheduler trigger loop that scans `next_trigger_time`, creates task instances, and assigns them to the least-loaded available worker
 - worker execution for `shell` and `http` task types
-- failure callback and centralized retry handling
+- failure and timeout callback with centralized retry handling
 
 ## Repository Backend
 

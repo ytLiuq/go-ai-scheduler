@@ -347,6 +347,84 @@ func TestGRPCInternalProtocolRetryThenSuccess(t *testing.T) {
 	waitForRetrySuccess(t, instanceRepo)
 }
 
+func TestHTTPInternalProtocolTimeoutRetryThenSuccess(t *testing.T) {
+	t.Parallel()
+
+	taskRepo := memory.NewTaskRepository()
+	instanceRepo := memory.NewTaskInstanceRepository()
+	workerRepo := memory.NewWorkerRepository()
+	logr := logger.New("test-http-timeout-retry")
+
+	router := route.NewRouter(workerRepo)
+	dispatcher := schedulerdispatch.NewClient()
+	workerService := apiservice.NewWorkerService(workerRepo)
+	schedulerServer := httptest.NewServer(handler.NewSchedulerRouter(
+		handler.NewWorkerHandler(workerService),
+		nil,
+	))
+	defer schedulerServer.Close()
+	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, schedulerServer.URL, logr)
+	schedulerServer.Config.Handler = handler.NewSchedulerRouter(
+		handler.NewWorkerHandler(workerService),
+		handler.NewTaskRuntimeHandler(runtimeService),
+	)
+
+	var requestCount atomic.Int32
+	sleepyTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requestCount.Add(1) == 1 {
+			time.Sleep(1500 * time.Millisecond)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer sleepyTarget.Close()
+
+	reportClient := reporter.NewClient("http", "")
+	workerHandler := workerapp.NewHandler("worker-http-timeout-retry-1", reportClient, logr)
+	workerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/internal/tasks/execute":
+			workerHandler.Execute(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer workerServer.Close()
+
+	heartbeatClient := heartbeat.NewClient(schedulerServer.URL, "", "http")
+	err := heartbeatClient.Register(context.Background(), apiservice.WorkerRegistrationRequest{
+		WorkerID:       "worker-http-timeout-retry-1",
+		Hostname:       "worker-http-timeout-retry-host",
+		IP:             "127.0.0.1",
+		CallbackURL:    workerServer.URL,
+		Protocol:       "http",
+		MaxConcurrency: 10,
+	})
+	if err != nil {
+		t.Fatalf("register worker over http: %v", err)
+	}
+
+	task := &model.Task{
+		Name:            "http-timeout-retry-task",
+		Type:            "http",
+		Payload:         sleepyTarget.URL,
+		Status:          "enabled",
+		TimeoutSeconds:  1,
+		MaxRetry:        1,
+		RetryPolicy:     "fixed_interval",
+		RouteStrategy:   "round_robin",
+		NextTriggerTime: time.Now().Add(-time.Second),
+	}
+	if err := taskRepo.CreateTask(context.Background(), task); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	loopCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, schedulerServer.URL).Start(loopCtx)
+
+	waitForRetryStatusSuccess(t, instanceRepo, "timeout")
+}
+
 func waitForStatus(t *testing.T, instanceRepo *memory.TaskInstanceRepository, expected string) {
 	t.Helper()
 
@@ -370,6 +448,11 @@ func waitForStatus(t *testing.T, instanceRepo *memory.TaskInstanceRepository, ex
 
 func waitForRetrySuccess(t *testing.T, instanceRepo *memory.TaskInstanceRepository) {
 	t.Helper()
+	waitForRetryStatusSuccess(t, instanceRepo, "failed")
+}
+
+func waitForRetryStatusSuccess(t *testing.T, instanceRepo *memory.TaskInstanceRepository, initialStatus string) {
+	t.Helper()
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -382,7 +465,7 @@ func waitForRetrySuccess(t *testing.T, instanceRepo *memory.TaskInstanceReposito
 		var successFound bool
 		var retrySuccessFound bool
 		for _, instance := range instances {
-			if instance.Status == "failed" && instance.RetryCount == 0 {
+			if instance.Status == initialStatus && instance.RetryCount == 0 {
 				failedFound = true
 			}
 			if instance.Status == "success" {
@@ -400,5 +483,5 @@ func waitForRetrySuccess(t *testing.T, instanceRepo *memory.TaskInstanceReposito
 	}
 
 	instances, _ := instanceRepo.ListInstances(context.Background())
-	t.Fatalf("did not observe failed->retry->success flow, instances=%+v", instances)
+	t.Fatalf("did not observe %s->retry->success flow, instances=%+v", initialStatus, instances)
 }

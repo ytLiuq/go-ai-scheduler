@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/example/go-ai-scheduler/internal/model"
-	"github.com/example/go-ai-scheduler/internal/rpc"
 	"github.com/example/go-ai-scheduler/internal/repo"
+	"github.com/example/go-ai-scheduler/internal/rpc"
 	"github.com/example/go-ai-scheduler/internal/scheduler/dispatch"
 	"github.com/example/go-ai-scheduler/internal/scheduler/route"
 )
@@ -27,12 +27,12 @@ type TaskStatusReportRequest struct {
 
 // TaskRuntimeService updates runtime execution state.
 type TaskRuntimeService struct {
-	tasks     repo.TaskRepository
-	instances repo.TaskInstanceRepository
-	workers   repo.WorkerRepository
-	router    *route.Router
-	dispatch  *dispatch.Client
-	logger    *log.Logger
+	tasks        repo.TaskRepository
+	instances    repo.TaskInstanceRepository
+	workers      repo.WorkerRepository
+	router       *route.Router
+	dispatch     *dispatch.Client
+	logger       *log.Logger
 	schedulerURL string
 }
 
@@ -47,13 +47,13 @@ func NewTaskRuntimeService(
 	logger *log.Logger,
 ) *TaskRuntimeService {
 	return &TaskRuntimeService{
-		tasks:         tasks,
-		instances:     instances,
-		workers:       workers,
-		router:        router,
-		dispatch:      dispatcher,
-		logger:        logger,
-		schedulerURL:  schedulerURL,
+		tasks:        tasks,
+		instances:    instances,
+		workers:      workers,
+		router:       router,
+		dispatch:     dispatcher,
+		logger:       logger,
+		schedulerURL: schedulerURL,
 	}
 }
 
@@ -91,7 +91,7 @@ func (s *TaskRuntimeService) ReportStatus(ctx context.Context, req TaskStatusRep
 }
 
 func (s *TaskRuntimeService) retryIfNeeded(ctx context.Context, instance *model.TaskInstance, req TaskStatusReportRequest) error {
-	if req.Status != "failed" {
+	if !isRetryableStatus(req.Status) {
 		return nil
 	}
 
@@ -160,6 +160,15 @@ func retryScheduleInstanceID(taskID int64, retryCount int) string {
 func isTerminalStatus(status string) bool {
 	switch status {
 	case "success", "failed", "timeout", "cancelled":
+		return true
+	default:
+		return false
+	}
+}
+
+func isRetryableStatus(status string) bool {
+	switch status {
+	case "failed", "timeout":
 		return true
 	default:
 		return false
