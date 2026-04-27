@@ -89,6 +89,15 @@ func (r *TaskRepository) UpdateTask(ctx context.Context, task *model.Task) error
 	return nil
 }
 
+// DeleteTask removes one task by id.
+func (r *TaskRepository) DeleteTask(ctx context.Context, id int64) error {
+	const query = `DELETE FROM task WHERE id = ?`
+	if _, err := r.db.ExecContext(ctx, query, id); err != nil {
+		return fmt.Errorf("delete task: %w", err)
+	}
+	return nil
+}
+
 // GetTask loads one task by id.
 func (r *TaskRepository) GetTask(ctx context.Context, id int64) (*model.Task, error) {
 	const query = `
@@ -180,4 +189,3 @@ func scanTasks(rows *sql.Rows) ([]*model.Task, error) {
 	}
 	return tasks, nil
 }
-

@@ -70,6 +70,18 @@ func (r *TaskRepository) UpdateTask(_ context.Context, task *model.Task) error {
 	return nil
 }
 
+// DeleteTask removes one task by id.
+func (r *TaskRepository) DeleteTask(_ context.Context, id int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, ok := r.tasks[id]; !ok {
+		return errTaskNotFound
+	}
+	delete(r.tasks, id)
+	return nil
+}
+
 // GetTask returns one task.
 func (r *TaskRepository) GetTask(_ context.Context, id int64) (*model.Task, error) {
 	r.mu.RLock()
@@ -124,4 +136,3 @@ func (r *TaskRepository) ListDueTasks(_ context.Context, limit int) ([]*model.Ta
 	}
 	return tasks, nil
 }
-

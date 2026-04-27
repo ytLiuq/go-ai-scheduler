@@ -60,7 +60,7 @@ func (h *TaskHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, tasks)
 }
 
-// GetOrUpdate handles task detail and updates.
+// GetOrUpdate handles task detail, updates, and deletion.
 func (h *TaskHandler) GetOrUpdate(w http.ResponseWriter, r *http.Request) {
 	id, err := parseTaskID(r.URL.Path)
 	if err != nil {
@@ -88,6 +88,12 @@ func (h *TaskHandler) GetOrUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, task)
+	case http.MethodDelete:
+		if deleteErr := h.service.DeleteTask(r.Context(), id); deleteErr != nil {
+			writeTaskServiceError(w, deleteErr)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	default:
 		methodNotAllowed(w, r.Method)
 	}
@@ -101,11 +107,10 @@ func parseTaskID(path string) (int64, error) {
 func writeTaskServiceError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	switch {
-	case errors.Is(err, service.ErrTaskNameRequired), errors.Is(err, service.ErrTaskTypeRequired), errors.Is(err, service.ErrTaskIDRequired):
+	case errors.Is(err, service.ErrTaskNameRequired), errors.Is(err, service.ErrTaskTypeRequired), errors.Is(err, service.ErrTaskIDRequired), errors.Is(err, service.ErrInvalidCronExpr):
 		status = http.StatusBadRequest
 	case strings.Contains(err.Error(), "not found"):
 		status = http.StatusNotFound
 	}
 	writeJSON(w, status, map[string]string{"error": err.Error()})
 }
-

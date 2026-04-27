@@ -10,6 +10,7 @@ import (
 type TaskRepository interface {
 	CreateTask(ctx context.Context, task *model.Task) error
 	UpdateTask(ctx context.Context, task *model.Task) error
+	DeleteTask(ctx context.Context, id int64) error
 	GetTask(ctx context.Context, id int64) (*model.Task, error)
 	ListTasks(ctx context.Context) ([]*model.Task, error)
 	ListDueTasks(ctx context.Context, limit int) ([]*model.Task, error)

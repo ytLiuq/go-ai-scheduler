@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/example/go-ai-scheduler/internal/model"
+	"github.com/example/go-ai-scheduler/internal/pkg/cronexpr"
 	"github.com/example/go-ai-scheduler/internal/repo"
 )
 
@@ -14,6 +15,7 @@ var (
 	ErrTaskNameRequired = errors.New("task name is required")
 	ErrTaskTypeRequired = errors.New("task type is required")
 	ErrTaskIDRequired   = errors.New("task id is required")
+	ErrInvalidCronExpr  = errors.New("invalid cron expression")
 )
 
 // TaskUpsertRequest contains task create and update input.
@@ -69,10 +71,28 @@ func (s *TaskService) UpdateTask(ctx context.Context, id int64, req TaskUpsertRe
 	}
 	task.CreatedAt = current.CreatedAt
 	task.Version = current.Version
+	if task.NextTriggerTime.IsZero() {
+		task.NextTriggerTime = current.NextTriggerTime
+		if task.CronExpr != current.CronExpr && task.CronExpr != "" {
+			nextTrigger, nextErr := cronexpr.NextAfter(time.Now(), task.CronExpr)
+			if nextErr != nil {
+				return nil, ErrInvalidCronExpr
+			}
+			task.NextTriggerTime = nextTrigger
+		}
+	}
 	if err := s.repo.UpdateTask(ctx, task); err != nil {
 		return nil, err
 	}
 	return task, nil
+}
+
+// DeleteTask removes one task.
+func (s *TaskService) DeleteTask(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return ErrTaskIDRequired
+	}
+	return s.repo.DeleteTask(ctx, id)
 }
 
 // GetTask returns one task.
@@ -110,6 +130,18 @@ func buildTask(id int64, req TaskUpsertRequest) (*model.Task, error) {
 	if req.RouteStrategy == "" {
 		req.RouteStrategy = "round_robin"
 	}
+	if req.CronExpr != "" {
+		if err := cronexpr.Validate(req.CronExpr); err != nil {
+			return nil, ErrInvalidCronExpr
+		}
+		if req.NextTriggerTime.IsZero() {
+			nextTrigger, nextErr := cronexpr.NextAfter(time.Now(), req.CronExpr)
+			if nextErr != nil {
+				return nil, ErrInvalidCronExpr
+			}
+			req.NextTriggerTime = nextTrigger
+		}
+	}
 
 	return &model.Task{
 		ID:              id,
@@ -126,4 +158,3 @@ func buildTask(id int64, req TaskUpsertRequest) (*model.Task, error) {
 		TenantID:        req.TenantID,
 	}, nil
 }
-
