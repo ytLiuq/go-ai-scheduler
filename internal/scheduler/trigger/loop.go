@@ -24,6 +24,7 @@ type Loop struct {
 	logger       *loggerAdapter
 	interval     time.Duration
 	schedulerURL string
+	maxPending   int
 }
 
 type loggerAdapter struct {
@@ -39,9 +40,13 @@ func NewLoop(
 	l *log.Logger,
 	interval time.Duration,
 	schedulerURL string,
+	maxPending int,
 ) *Loop {
 	if interval <= 0 {
 		interval = time.Second
+	}
+	if maxPending <= 0 {
+		maxPending = 1000
 	}
 	return &Loop{
 		taskRepo:     taskRepo,
@@ -51,6 +56,7 @@ func NewLoop(
 		logger:       &loggerAdapter{printf: l.Printf},
 		interval:     interval,
 		schedulerURL: schedulerURL,
+		maxPending:   maxPending,
 	}
 }
 
@@ -73,6 +79,16 @@ func (l *Loop) Start(ctx context.Context) {
 }
 
 func (l *Loop) scan(ctx context.Context) {
+	pending, err := l.instanceRepo.CountInstancesByStatus(ctx, "pending")
+	if err != nil {
+		l.logger.printf("count pending instances failed: %v", err)
+		return
+	}
+	if pending >= l.maxPending {
+		l.logger.printf("backpressure: %d pending instances >= max %d, skipping scan", pending, l.maxPending)
+		return
+	}
+
 	tasks, err := l.taskRepo.ListDueTasks(ctx, 100)
 	if err != nil {
 		l.logger.printf("list due tasks failed: %v", err)
@@ -97,7 +113,10 @@ func (l *Loop) handleTask(ctx context.Context, task *model.Task) error {
 		return fmt.Errorf("create task instance: %w", err)
 	}
 
-	worker, err := l.router.PickAndReserveWorker(ctx)
+	worker, err := l.router.Pick(ctx, route.SelectOptions{
+			Labels:   model.DecodeLabels(task.Labels),
+			Strategy: task.RouteStrategy,
+		})
 	if err != nil {
 		if err == route.ErrNoAvailableWorker {
 			task.NextTriggerTime = time.Now().Add(10 * time.Second)

@@ -111,6 +111,25 @@ func (r *TaskRepository) ListTasks(_ context.Context) ([]*model.Task, error) {
 	return tasks, nil
 }
 
+// ListTasksByTenant returns all tasks for the given tenant.
+func (r *TaskRepository) ListTasksByTenant(_ context.Context, tenantID int64) ([]*model.Task, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	tasks := make([]*model.Task, 0)
+	for _, task := range r.tasks {
+		if task.TenantID != tenantID {
+			continue
+		}
+		copyTask := *task
+		tasks = append(tasks, &copyTask)
+	}
+	sort.Slice(tasks, func(i, j int) bool {
+		return tasks[i].ID < tasks[j].ID
+	})
+	return tasks, nil
+}
+
 // ListDueTasks returns enabled tasks whose next trigger time has arrived.
 func (r *TaskRepository) ListDueTasks(_ context.Context, limit int) ([]*model.Task, error) {
 	r.mu.RLock()
