@@ -8,6 +8,7 @@ import (
 
 	"github.com/example/go-ai-scheduler/internal/model"
 	"github.com/example/go-ai-scheduler/internal/pkg/cronexpr"
+	"github.com/example/go-ai-scheduler/internal/pkg/metrics"
 	"github.com/example/go-ai-scheduler/internal/repo"
 )
 
@@ -52,6 +53,7 @@ func (s *TaskService) CreateTask(ctx context.Context, req TaskUpsertRequest) (*m
 	if err := s.repo.CreateTask(ctx, task); err != nil {
 		return nil, err
 	}
+	metrics.DefaultRegistry.IncCounter("tasks_mutations_total", map[string]string{"action": "create"})
 	return task, nil
 }
 
@@ -84,6 +86,7 @@ func (s *TaskService) UpdateTask(ctx context.Context, id int64, req TaskUpsertRe
 	if err := s.repo.UpdateTask(ctx, task); err != nil {
 		return nil, err
 	}
+	metrics.DefaultRegistry.IncCounter("tasks_mutations_total", map[string]string{"action": "update"})
 	return task, nil
 }
 
@@ -92,7 +95,11 @@ func (s *TaskService) DeleteTask(ctx context.Context, id int64) error {
 	if id <= 0 {
 		return ErrTaskIDRequired
 	}
-	return s.repo.DeleteTask(ctx, id)
+	if err := s.repo.DeleteTask(ctx, id); err != nil {
+		return err
+	}
+	metrics.DefaultRegistry.IncCounter("tasks_mutations_total", map[string]string{"action": "delete"})
+	return nil
 }
 
 // GetTask returns one task.

@@ -12,6 +12,7 @@ import (
 	apiservice "github.com/example/go-ai-scheduler/internal/api/service"
 	"github.com/example/go-ai-scheduler/internal/config"
 	"github.com/example/go-ai-scheduler/internal/pkg/logger"
+	"github.com/example/go-ai-scheduler/internal/pkg/metrics"
 	_ "github.com/example/go-ai-scheduler/internal/pkg/xgrpc"
 	workerapp "github.com/example/go-ai-scheduler/internal/worker"
 	workergrpc "github.com/example/go-ai-scheduler/internal/worker/grpcserver"
@@ -34,18 +35,20 @@ func main() {
 	workerHandler := workerapp.NewHandler(workerID, reportClient, l)
 	server := &http.Server{
 		Addr: cfg.HTTPAddr,
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		Handler: metrics.Instrument("worker", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
 			case "/healthz":
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte(`{"status":"ok"}`))
+			case "/metrics":
+				metrics.DefaultRegistry.Handler().ServeHTTP(w, r)
 			case "/internal/tasks/execute":
 				workerHandler.Execute(w, r)
 			default:
 				http.NotFound(w, r)
 			}
-		}),
+		})),
 	}
 	go func() {
 		l.Printf("worker http server started on %s", cfg.HTTPAddr)

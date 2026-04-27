@@ -8,6 +8,7 @@ import (
 
 	"github.com/example/go-ai-scheduler/internal/model"
 	"github.com/example/go-ai-scheduler/internal/pkg/cronexpr"
+	"github.com/example/go-ai-scheduler/internal/pkg/metrics"
 	"github.com/example/go-ai-scheduler/internal/repo"
 	"github.com/example/go-ai-scheduler/internal/rpc"
 	"github.com/example/go-ai-scheduler/internal/scheduler/dispatch"
@@ -122,12 +123,14 @@ func (l *Loop) handleTask(ctx context.Context, task *model.Task) error {
 		RetryCount:         instance.RetryCount,
 		SchedulerURL:       l.schedulerURL,
 	}); err != nil {
+		metrics.DefaultRegistry.IncCounter("scheduler_dispatch_total", map[string]string{"result": "error"})
 		_ = l.instanceRepo.UpdateInstanceResult(ctx, instance.ScheduleInstanceID, "failed", "dispatch_failed", err.Error())
 		_ = l.router.Release(ctx, worker)
 		task.NextTriggerTime = time.Now().Add(10 * time.Second)
 		_ = l.taskRepo.UpdateTask(ctx, task)
 		return fmt.Errorf("dispatch to worker: %w", err)
 	}
+	metrics.DefaultRegistry.IncCounter("scheduler_dispatch_total", map[string]string{"result": "success"})
 
 	nextTrigger, err := nextTriggerTime(task, time.Now())
 	if err != nil {

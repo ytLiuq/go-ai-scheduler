@@ -10,6 +10,7 @@ import (
 	"time"
 
 	apiservice "github.com/example/go-ai-scheduler/internal/api/service"
+	"github.com/example/go-ai-scheduler/internal/pkg/metrics"
 	"github.com/example/go-ai-scheduler/internal/rpc"
 	"github.com/example/go-ai-scheduler/internal/worker/executor"
 	"github.com/example/go-ai-scheduler/internal/worker/reporter"
@@ -88,8 +89,10 @@ func (h *Handler) run(req rpc.ExecuteTaskRequest) {
 			statusReq.ErrorCode = "execute_failed"
 		}
 		statusReq.ErrorMessage = err.Error()
+		metrics.DefaultRegistry.IncCounter("worker_executions_total", map[string]string{"status": statusReq.Status})
 		h.logger.Printf("task execution failed schedule_instance_id=%s err=%v", req.ScheduleInstanceID, err)
 	} else {
+		metrics.DefaultRegistry.IncCounter("worker_executions_total", map[string]string{"status": statusReq.Status})
 		h.logger.Printf("task execution succeeded schedule_instance_id=%s", req.ScheduleInstanceID)
 	}
 

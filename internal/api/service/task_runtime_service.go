@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/example/go-ai-scheduler/internal/model"
+	"github.com/example/go-ai-scheduler/internal/pkg/metrics"
 	"github.com/example/go-ai-scheduler/internal/repo"
 	"github.com/example/go-ai-scheduler/internal/rpc"
 	"github.com/example/go-ai-scheduler/internal/scheduler/dispatch"
@@ -74,6 +75,7 @@ func (s *TaskRuntimeService) ReportStatus(ctx context.Context, req TaskStatusRep
 	if err := s.instances.UpdateInstanceResult(ctx, req.ScheduleInstanceID, req.Status, req.ErrorCode, req.ErrorMessage); err != nil {
 		return err
 	}
+	metrics.DefaultRegistry.IncCounter("task_runtime_reports_total", map[string]string{"status": req.Status})
 	if req.WorkerID == "" {
 		return s.retryIfNeeded(ctx, instance, req)
 	}
