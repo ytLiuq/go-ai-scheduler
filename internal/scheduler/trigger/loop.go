@@ -7,8 +7,9 @@ import (
 	"time"
 
 	"github.com/example/go-ai-scheduler/internal/model"
-	"github.com/example/go-ai-scheduler/internal/rpc"
+	"github.com/example/go-ai-scheduler/internal/pkg/cronexpr"
 	"github.com/example/go-ai-scheduler/internal/repo"
+	"github.com/example/go-ai-scheduler/internal/rpc"
 	"github.com/example/go-ai-scheduler/internal/scheduler/dispatch"
 	"github.com/example/go-ai-scheduler/internal/scheduler/route"
 )
@@ -128,7 +129,11 @@ func (l *Loop) handleTask(ctx context.Context, task *model.Task) error {
 		return fmt.Errorf("dispatch to worker: %w", err)
 	}
 
-	task.NextTriggerTime = nextTriggerTime(task)
+	nextTrigger, err := nextTriggerTime(task, time.Now())
+	if err != nil {
+		return fmt.Errorf("compute next trigger time: %w", err)
+	}
+	task.NextTriggerTime = nextTrigger
 	if err := l.taskRepo.UpdateTask(ctx, task); err != nil {
 		return fmt.Errorf("update next trigger time: %w", err)
 	}
@@ -147,12 +152,9 @@ func scheduleInstanceID(taskID int64) string {
 	return fmt.Sprintf("task-%d-%d", taskID, time.Now().UnixNano())
 }
 
-func nextTriggerTime(task *model.Task) time.Time {
-	// Bootstrap implementation:
-	// if cron is absent, mark the task as no longer due by moving it far into the future.
-	// if cron exists, reschedule using a fixed 1-minute interval placeholder until a real cron engine is added.
+func nextTriggerTime(task *model.Task, now time.Time) (time.Time, error) {
 	if task.CronExpr == "" {
-		return time.Now().Add(24 * time.Hour * 365)
+		return now.Add(24 * time.Hour * 365), nil
 	}
-	return time.Now().Add(time.Minute)
+	return cronexpr.NextAfter(now, task.CronExpr)
 }
