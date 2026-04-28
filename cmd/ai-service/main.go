@@ -9,6 +9,7 @@ import (
 	"github.com/example/go-ai-scheduler/internal/ai/adapter"
 	"github.com/example/go-ai-scheduler/internal/config"
 	"github.com/example/go-ai-scheduler/internal/pkg/logger"
+	"github.com/example/go-ai-scheduler/internal/repo/memory"
 )
 
 func main() {
@@ -28,9 +29,11 @@ func main() {
 		l.Printf("LLM adapter not configured, running heuristics-only mode")
 	}
 
+	aiAnalysisRepo := memory.NewAIAnalysisRepository()
+
 	server := &http.Server{
 		Addr:    cfg.HTTPAddr,
-		Handler: ai.NewRouter(llm),
+		Handler: ai.NewRouter(llm, aiAnalysisRepo),
 	}
 
 	l.Printf("starting ai-service http server on %s", cfg.HTTPAddr)

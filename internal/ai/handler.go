@@ -9,7 +9,9 @@ import (
 	aiadvisor "github.com/example/go-ai-scheduler/internal/ai/advisor"
 	aicron "github.com/example/go-ai-scheduler/internal/ai/cron"
 	"github.com/example/go-ai-scheduler/internal/ai/loganalysis"
+	"github.com/example/go-ai-scheduler/internal/model"
 	"github.com/example/go-ai-scheduler/internal/pkg/metrics"
+	"github.com/example/go-ai-scheduler/internal/repo"
 )
 
 type cronNextRequest struct {
@@ -22,31 +24,31 @@ type cronParseRequest struct {
 }
 
 type logAnalysisRequest struct {
-	Log       string `json:"log"`
-	ErrorCode string `json:"error_code"`
-	TaskType  string `json:"task_type"`
-	RetryCount int   `json:"retry_count"`
+	Log        string `json:"log"`
+	ErrorCode  string `json:"error_code"`
+	TaskType   string `json:"task_type"`
+	RetryCount int    `json:"retry_count"`
 }
 
 type advisorRequest struct {
-	AvgWorkerLoad       float64 `json:"avg_worker_load"`
-	TotalWorkers        int     `json:"total_workers"`
-	OnlineWorkers       int     `json:"online_workers"`
-	PendingInstances    int     `json:"pending_instances"`
-	FailedLastHour      int     `json:"failed_last_hour"`
+	AvgWorkerLoad        float64 `json:"avg_worker_load"`
+	TotalWorkers         int     `json:"total_workers"`
+	OnlineWorkers        int     `json:"online_workers"`
+	PendingInstances     int     `json:"pending_instances"`
+	FailedLastHour       int     `json:"failed_last_hour"`
 	AvgDispatchLatencyMs float64 `json:"avg_dispatch_latency_ms"`
-	MaxPendingConfig    int     `json:"max_pending_config"`
+	MaxPendingConfig     int     `json:"max_pending_config"`
 }
 
 // NewRouter wires AI helper endpoints.
-func NewRouter(llm *adapter.LLMAdapter) http.Handler {
+func NewRouter(llm *adapter.LLMAdapter, aiRepo repo.AIAnalysisRepository) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", health)
 	mux.Handle("/metrics", metrics.DefaultRegistry.Handler())
 	mux.HandleFunc("/api/v1/cron/next", cronNext)
-	mux.HandleFunc("POST /api/v1/cron/parse", func(w http.ResponseWriter, r *http.Request) { parseCronNatural(w, r, llm) })
-	mux.HandleFunc("/api/v1/log-analysis/analyze", func(w http.ResponseWriter, r *http.Request) { analyzeLog(w, r, llm) })
-	mux.HandleFunc("POST /api/v1/advisor/generate", func(w http.ResponseWriter, r *http.Request) { generateAdvice(w, r, llm) })
+	mux.HandleFunc("POST /api/v1/cron/parse", func(w http.ResponseWriter, r *http.Request) { parseCronNatural(w, r, llm, aiRepo) })
+	mux.HandleFunc("/api/v1/log-analysis/analyze", func(w http.ResponseWriter, r *http.Request) { analyzeLog(w, r, llm, aiRepo) })
+	mux.HandleFunc("POST /api/v1/advisor/generate", func(w http.ResponseWriter, r *http.Request) { generateAdvice(w, r, llm, aiRepo) })
 	return metrics.Instrument("ai-service", mux)
 }
 
@@ -74,7 +76,7 @@ func cronNext(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func parseCronNatural(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter) {
+func parseCronNatural(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter, aiRepo repo.AIAnalysisRepository) {
 	var req cronParseRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"})
@@ -91,10 +93,19 @@ func parseCronNatural(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAd
 		return
 	}
 	metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "cron_parse", "result": "ok"})
+	if aiRepo != nil {
+		outputJSON, _ := json.Marshal(resp)
+		_ = aiRepo.CreateRecord(r.Context(), &model.AIAnalysisRecord{
+			AnalysisType: "cron_parse",
+			InputJSON:    req.Input,
+			OutputJSON:   string(outputJSON),
+			Confidence:   resp.Confidence,
+		})
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func analyzeLog(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter) {
+func analyzeLog(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter, aiRepo repo.AIAnalysisRepository) {
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w, r.Method)
 		return
@@ -105,14 +116,25 @@ func analyzeLog(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter)
 		return
 	}
 	metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "log_analysis", "result": "ok"})
+	var result *loganalysis.AnalysisResponse
 	if llm != nil && llm.Enabled() {
-		writeJSON(w, http.StatusOK, loganalysis.AnalyzeWithLLM(r.Context(), llm, req.Log, req.ErrorCode, req.TaskType, req.RetryCount))
+		result = loganalysis.AnalyzeWithLLM(r.Context(), llm, req.Log, req.ErrorCode, req.TaskType, req.RetryCount)
 	} else {
-		writeJSON(w, http.StatusOK, loganalysis.Analyze(req.Log))
+		result = loganalysis.Analyze(req.Log)
 	}
+	if aiRepo != nil {
+		outputJSON, _ := json.Marshal(result)
+		_ = aiRepo.CreateRecord(r.Context(), &model.AIAnalysisRecord{
+			AnalysisType: "log_analysis",
+			InputJSON:    req.Log,
+			OutputJSON:   string(outputJSON),
+			Confidence:   result.Confidence,
+		})
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
-func generateAdvice(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter) {
+func generateAdvice(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter, aiRepo repo.AIAnalysisRepository) {
 	var req advisorRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"})
@@ -133,6 +155,22 @@ func generateAdvice(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdap
 		return
 	}
 	metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "advisor", "result": "ok"})
+	if aiRepo != nil {
+		inputJSON, _ := json.Marshal(req)
+		outputJSON, _ := json.Marshal(advices)
+		var maxConf float64
+		for _, a := range advices {
+			if a.Confidence > maxConf {
+				maxConf = a.Confidence
+			}
+		}
+		_ = aiRepo.CreateRecord(r.Context(), &model.AIAnalysisRecord{
+			AnalysisType: "schedule_advice",
+			InputJSON:    string(inputJSON),
+			OutputJSON:   string(outputJSON),
+			Confidence:   maxConf,
+		})
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"advices": advices})
 }
 
