@@ -1,0 +1,51 @@
+{
+  "dashboard": {
+    "title": "Go AI Scheduler",
+    "tags": ["scheduler", "go"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "title": "Dispatch Rate",
+        "type": "graph",
+        "targets": [
+          {"expr": "rate(scheduler_dispatch_total[1m])", "legendFormat": "{{result}}"}
+        ]
+      },
+      {
+        "title": "Task Instance Status",
+        "type": "graph",
+        "targets": [
+          {"expr": "rate(task_runtime_reports_total[1m])", "legendFormat": "{{status}}"}
+        ]
+      },
+      {
+        "title": "HTTP Request Rate",
+        "type": "graph",
+        "targets": [
+          {"expr": "rate(http_requests_total[1m])", "legendFormat": "{{status}}"}
+        ]
+      },
+      {
+        "title": "Worker Executions",
+        "type": "graph",
+        "targets": [
+          {"expr": "rate(worker_executions_total[1m])", "legendFormat": "{{status}}"}
+        ]
+      },
+      {
+        "title": "Pending Instances",
+        "type": "stat",
+        "targets": [
+          {"expr": "sum(task_runtime_reports_total{status=\"pending\"})"}
+        ]
+      },
+      {
+        "title": "AI Requests",
+        "type": "graph",
+        "targets": [
+          {"expr": "rate(ai_requests_total[1m])", "legendFormat": "{{endpoint}}/{{result}}"}
+        ]
+      }
+    ]
+  }
+}

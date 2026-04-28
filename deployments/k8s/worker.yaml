@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: go-ai-worker
+  labels:
+    app: go-ai-worker
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: go-ai-worker
+  template:
+    metadata:
+      labels:
+        app: go-ai-worker
+    spec:
+      containers:
+        - name: worker
+          image: go-ai-scheduler:latest
+          command: ["/app/worker"]
+          ports:
+            - containerPort: 8081
+              name: http
+            - containerPort: 9091
+              name: grpc
+          env:
+            - name: SCHEDULER_URL
+              value: "http://go-ai-scheduler:8080"
+            - name: SCHEDULER_GRPC_ADDR
+              value: "go-ai-scheduler:9090"
+            - name: INTERNAL_PROTOCOL
+              value: "grpc"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi

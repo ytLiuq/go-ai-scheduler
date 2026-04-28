@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: go-ai-scheduler
+  labels:
+    app: go-ai-scheduler
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: go-ai-scheduler
+  template:
+    metadata:
+      labels:
+        app: go-ai-scheduler
+    spec:
+      containers:
+        - name: scheduler
+          image: go-ai-scheduler:latest
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 9090
+              name: grpc
+          env:
+            - name: REPO_BACKEND
+              value: "mysql"
+            - name: MYSQL_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: scheduler-db
+                  key: dsn
+            - name: ETCD_ENDPOINTS
+              value: "etcd-0.etcd:2379,etcd-1.etcd:2379,etcd-2.etcd:2379"
+            - name: REDIS_ADDR
+              value: "redis:6379"
+            - name: ALERT_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: scheduler-alert
+                  key: url
+                  optional: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: go-ai-scheduler
+spec:
+  selector:
+    app: go-ai-scheduler
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+    - name: grpc
+      port: 9090
+      targetPort: 9090

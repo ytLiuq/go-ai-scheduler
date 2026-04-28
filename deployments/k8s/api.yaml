@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: go-ai-api
+  labels:
+    app: go-ai-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: go-ai-api
+  template:
+    metadata:
+      labels:
+        app: go-ai-api
+    spec:
+      containers:
+        - name: api
+          image: go-ai-scheduler:latest
+          command: ["/app/api"]
+          ports:
+            - containerPort: 8082
+              name: http
+          env:
+            - name: REPO_BACKEND
+              value: "mysql"
+            - name: MYSQL_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: scheduler-db
+                  key: dsn
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: go-ai-api
+spec:
+  selector:
+    app: go-ai-api
+  ports:
+    - name: http
+      port: 8082
+      targetPort: 8082
