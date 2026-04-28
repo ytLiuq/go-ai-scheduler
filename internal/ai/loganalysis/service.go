@@ -68,6 +68,15 @@ func llmAnalyze(ctx context.Context, llm *adapter.LLMAdapter, logText, errorCode
 	}
 }
 
+func containsAny(s string, substrs ...string) bool {
+	for _, sub := range substrs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
+}
+
 func heuristicAnalyze(logText string) *AnalysisResponse {
 	lower := strings.ToLower(logText)
 	response := &AnalysisResponse{

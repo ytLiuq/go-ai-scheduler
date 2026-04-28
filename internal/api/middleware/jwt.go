@@ -2,31 +2,49 @@ package middleware
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
 
-// JWT secret key. In production, this should come from configuration.
-var jwtSecret = []byte("go-ai-scheduler-jwt-secret-change-me")
+// jwtSecret is the signing key. Initialised from JWT_SECRET or a random key.
+var jwtSecret []byte
 
-// SetJWTSecret overrides the default JWT signing key.
+func init() {
+	if s := os.Getenv("JWT_SECRET"); s != "" {
+		jwtSecret = []byte(s)
+	}
+}
+
+func secret() []byte {
+	if jwtSecret != nil {
+		return jwtSecret
+	}
+	key := make([]byte, 32)
+	_, _ = rand.Read(key)
+	jwtSecret = key
+	return jwtSecret
+}
+
+// SetJWTSecret overrides the signing key programmatically (for tests).
 func SetJWTSecret(secret []byte) {
 	jwtSecret = secret
 }
 
 // Claims carried in a JWT token.
 type Claims struct {
-	Sub  string `json:"sub"`  // user ID
-	Role string `json:"role"` // admin, operator, viewer
-	Iat  int64  `json:"iat"`  // issued at
-	Exp  int64  `json:"exp"`  // expiration
+	Sub  string `json:"sub"`
+	Role string `json:"role"`
+	Iat  int64  `json:"iat"`
+	Exp  int64  `json:"exp"`
 }
 
-// SignToken creates a signed JWT token for the given claims.
+// SignToken creates a signed JWT token.
 func SignToken(claims Claims) (string, error) {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
 	payloadBytes, err := json.Marshal(claims)
@@ -35,20 +53,20 @@ func SignToken(claims Claims) (string, error) {
 	}
 	payload := base64.RawURLEncoding.EncodeToString(payloadBytes)
 	unsigned := header + "." + payload
-	mac := hmac.New(sha256.New, jwtSecret)
+	mac := hmac.New(sha256.New, secret())
 	mac.Write([]byte(unsigned))
 	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	return unsigned + "." + sig, nil
 }
 
-// ParseToken validates a JWT token and returns its claims.
+// ParseToken validates and returns claims from a JWT.
 func ParseToken(token string) (*Claims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return nil, &JWTError{"invalid token format"}
 	}
 	unsigned := parts[0] + "." + parts[1]
-	mac := hmac.New(sha256.New, jwtSecret)
+	mac := hmac.New(sha256.New, secret())
 	mac.Write([]byte(unsigned))
 	expectedSig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	if !hmac.Equal([]byte(parts[2]), []byte(expectedSig)) {
@@ -77,8 +95,7 @@ func (e *JWTError) Error() string {
 	return "jwt: " + e.Message
 }
 
-// Authenticate is an HTTP middleware that validates a Bearer token and injects
-// claims into the request context.
+// Authenticate validates a Bearer token and injects claims into the context.
 func Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")

@@ -65,7 +65,9 @@ func (e *Engine) Start(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			e.logger.Printf("scheduling engine stopped")
+			if e.logger != nil {
+				e.logger.Printf("scheduling engine stopped")
+			}
 			return
 		case <-wheelTicker.C:
 			e.processWheelTick()
@@ -116,7 +118,7 @@ func (e *Engine) Warm(ctx context.Context) error {
 	// Load retry_waiting instances into the min-heap for precise timing.
 	retryInstances, err := e.instanceRepo.ListDueRetryInstances(ctx, cutoff, 500)
 	if err != nil {
-		e.logger.Printf("engine warm: list retry instances failed: %v", err)
+		if e.logger != nil { e.logger.Printf("engine warm: list retry instances failed: %v", err) }
 		return nil // non-fatal
 	}
 	for _, inst := range retryInstances {
@@ -142,7 +144,7 @@ func (e *Engine) WarmPeriodically(ctx context.Context, interval time.Duration) {
 			return
 		case <-ticker.C:
 			if err := e.Warm(ctx); err != nil {
-				e.logger.Printf("engine warm failed: %v", err)
+				if e.logger != nil { e.logger.Printf("engine warm failed: %v", err) }
 			}
 		}
 	}

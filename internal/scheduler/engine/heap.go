@@ -38,13 +38,14 @@ func (h taskHeap) Peek() (heapItem, bool) {
 // PopUntil returns all items whose trigger time is at or before cutoff.
 func (h *taskHeap) PopUntil(cutoff time.Time) []heapItem {
 	var result []heapItem
-	for len(*h) > 0 {
-		item := (*h)[0]
+	remaining := (*h)[:0]
+	for _, item := range *h {
 		if item.TriggerTime.After(cutoff) {
-			break
+			remaining = append(remaining, item)
+		} else {
+			result = append(result, item)
 		}
-		result = append(result, item)
-		_ = h.Pop()
 	}
+	*h = remaining
 	return result
 }

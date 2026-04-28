@@ -25,11 +25,16 @@ func GetClaims(ctx context.Context) *Claims {
 	return claims
 }
 
-// RequireRole is middleware that only allows users with specific roles.
+// RequireRole is middleware that requires at least one of the given roles.
+// Roles use hierarchical weights: admin > operator > viewer.
 func RequireRole(roles ...string) func(http.Handler) http.Handler {
-	allowed := make(map[string]struct{}, len(roles))
+	roleWeight := map[string]int{"admin": 3, "operator": 2, "viewer": 1}
+	// Compute the minimum role weight required.
+	minWeight := 0
 	for _, r := range roles {
-		allowed[r] = struct{}{}
+		if w := roleWeight[r]; w > minWeight {
+			minWeight = w
+		}
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -38,7 +43,7 @@ func RequireRole(roles ...string) func(http.Handler) http.Handler {
 				writeAuthError(w, "authentication required")
 				return
 			}
-			if _, ok := allowed[claims.Role]; !ok {
+			if roleWeight[claims.Role] < minWeight {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusForbidden)
 				_ = json.NewEncoder(w).Encode(map[string]string{"error": "insufficient permissions"})
