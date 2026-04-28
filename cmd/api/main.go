@@ -25,6 +25,7 @@ func main() {
 	server := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: handler.NewAPIRouter(
+			handler.NewAuthHandler(),
 			handler.NewWorkerHandler(workerService),
 			handler.NewTaskHandler(taskService),
 			handler.NewTaskInstanceHandler(taskInstanceService),
