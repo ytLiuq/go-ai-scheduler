@@ -8,5 +8,8 @@ type ExecuteTaskRequest struct {
 	Payload            string `json:"payload"`
 	TimeoutSeconds     int    `json:"timeout_seconds"`
 	RetryCount         int    `json:"retry_count"`
+	ShardNo            int    `json:"shard_no"`
+	ShardTotal         int    `json:"shard_total"`
+	IdempotencyKey     string `json:"idempotency_key"`
 	SchedulerURL       string `json:"scheduler_url"`
 }

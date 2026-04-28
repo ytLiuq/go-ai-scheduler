@@ -19,6 +19,10 @@ type Task struct {
 	NextTriggerTime time.Time
 	TenantID        int64
 	Version         int64
+	TotalShards     int    // number of shards (0 or 1 = no sharding)
+	IdempotencyKey  string // optional business idempotency key
+	TriggerType     string // "cron" (default), "event"
+	EventName       string // event name for event-triggered tasks
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }

@@ -212,4 +212,52 @@ func scanTasks(rows *sql.Rows) ([]*model.Task, error) {
 		return nil, fmt.Errorf("iterate tasks: %w", err)
 	}
 	return tasks, nil
-}
+	}
+
+	// AddDependency records a dependency edge.
+	func (r *TaskRepository) AddDependency(ctx context.Context, taskID, dependsOnTaskID int64) error {
+		_, err := r.db.ExecContext(ctx, "INSERT INTO task_dependency (task_id, depends_on_task_id) VALUES (?, ?)", taskID, dependsOnTaskID)
+		return err
+	}
+
+	// RemoveDependency removes a dependency edge.
+	func (r *TaskRepository) RemoveDependency(ctx context.Context, taskID, dependsOnTaskID int64) error {
+		_, err := r.db.ExecContext(ctx, "DELETE FROM task_dependency WHERE task_id = ? AND depends_on_task_id = ?", taskID, dependsOnTaskID)
+		return err
+	}
+
+	// ListDownstreamTasks returns task IDs that depend on taskID.
+	func (r *TaskRepository) ListDownstreamTasks(ctx context.Context, taskID int64) ([]int64, error) {
+		rows, err := r.db.QueryContext(ctx, "SELECT task_id FROM task_dependency WHERE depends_on_task_id = ?", taskID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, err
+			}
+			ids = append(ids, id)
+		}
+		return ids, rows.Err()
+	}
+
+	// ListUpstreamDeps returns task IDs that taskID depends on.
+	func (r *TaskRepository) ListUpstreamDeps(ctx context.Context, taskID int64) ([]int64, error) {
+		rows, err := r.db.QueryContext(ctx, "SELECT depends_on_task_id FROM task_dependency WHERE task_id = ?", taskID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, err
+			}
+			ids = append(ids, id)
+		}
+		return ids, rows.Err()
+	}

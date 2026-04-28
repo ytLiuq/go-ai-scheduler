@@ -7,7 +7,7 @@ import (
 	"github.com/example/go-ai-scheduler/internal/model"
 )
 
-// TaskRepository persists task definitions.
+// TaskRepository persists task definitions and dependencies.
 type TaskRepository interface {
 	CreateTask(ctx context.Context, task *model.Task) error
 	UpdateTask(ctx context.Context, task *model.Task) error
@@ -16,6 +16,12 @@ type TaskRepository interface {
 	ListTasks(ctx context.Context) ([]*model.Task, error)
 	ListTasksByTenant(ctx context.Context, tenantID int64) ([]*model.Task, error)
 	ListDueTasks(ctx context.Context, limit int) ([]*model.Task, error)
+
+	// Dependency management.
+	AddDependency(ctx context.Context, taskID, dependsOnTaskID int64) error
+	RemoveDependency(ctx context.Context, taskID, dependsOnTaskID int64) error
+	ListDownstreamTasks(ctx context.Context, taskID int64) ([]int64, error)
+	ListUpstreamDeps(ctx context.Context, taskID int64) ([]int64, error)
 }
 
 // TaskInstanceRepository persists generated task instances.

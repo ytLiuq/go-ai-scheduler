@@ -7,6 +7,8 @@ type TaskInstance struct {
 	ID                 int64
 	TaskID             int64
 	ScheduleInstanceID string
+	ShardNo            int    // shard index (0-based, 0 for non-sharded)
+	ShardTotal         int    // total shard count (0 for non-sharded)
 	TriggerTime        time.Time
 	DispatchTime       time.Time
 	WorkerID           string

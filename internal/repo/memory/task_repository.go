@@ -14,9 +14,10 @@ var errTaskNotFound = errors.New("task not found")
 
 // TaskRepository is an in-memory task store for local development.
 type TaskRepository struct {
-	mu     sync.RWMutex
-	nextID int64
-	tasks  map[int64]*model.Task
+	mu           sync.RWMutex
+	nextID       int64
+	tasks        map[int64]*model.Task
+	dependencies []model.TaskDependency
 }
 
 // NewTaskRepository creates an empty task repository.
@@ -154,4 +155,62 @@ func (r *TaskRepository) ListDueTasks(_ context.Context, limit int) ([]*model.Ta
 		tasks = tasks[:limit]
 	}
 	return tasks, nil
+}
+
+// AddDependency records that taskID depends on dependsOnTaskID.
+func (r *TaskRepository) AddDependency(_ context.Context, taskID, dependsOnTaskID int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.tasks[taskID]; !ok {
+		return errTaskNotFound
+	}
+	if _, ok := r.tasks[dependsOnTaskID]; !ok {
+		return errTaskNotFound
+	}
+	r.dependencies = append(r.dependencies, model.TaskDependency{
+		TaskID:          taskID,
+		DependsOnTaskID: dependsOnTaskID,
+	})
+	return nil
+}
+
+// RemoveDependency removes a dependency edge.
+func (r *TaskRepository) RemoveDependency(_ context.Context, taskID, dependsOnTaskID int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	filtered := make([]model.TaskDependency, 0)
+	for _, d := range r.dependencies {
+		if d.TaskID == taskID && d.DependsOnTaskID == dependsOnTaskID {
+			continue
+		}
+		filtered = append(filtered, d)
+	}
+	r.dependencies = filtered
+	return nil
+}
+
+// ListDownstreamTasks returns task IDs that depend on taskID.
+func (r *TaskRepository) ListDownstreamTasks(_ context.Context, taskID int64) ([]int64, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var result []int64
+	for _, d := range r.dependencies {
+		if d.DependsOnTaskID == taskID {
+			result = append(result, d.TaskID)
+		}
+	}
+	return result, nil
+}
+
+// ListUpstreamDeps returns task IDs that taskID depends on.
+func (r *TaskRepository) ListUpstreamDeps(_ context.Context, taskID int64) ([]int64, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var result []int64
+	for _, d := range r.dependencies {
+		if d.TaskID == taskID {
+			result = append(result, d.DependsOnTaskID)
+		}
+	}
+	return result, nil
 }

@@ -85,6 +85,10 @@ func (s *TaskRuntimeService) ReportStatus(ctx context.Context, req TaskStatusRep
 		s.logger.Printf("task running schedule_instance_id=%s worker_id=%s", req.ScheduleInstanceID, req.WorkerID)
 		return nil
 	}
+	// On success, advance downstream tasks so they become due.
+	if req.Status == "success" {
+		s.fireDownstream(ctx, instance)
+	}
 	if req.WorkerID == "" {
 		return s.retryIfNeeded(ctx, instance, req)
 	}
@@ -99,6 +103,30 @@ func (s *TaskRuntimeService) ReportStatus(ctx context.Context, req TaskStatusRep
 		return err
 	}
 	return s.retryIfNeeded(ctx, instance, req)
+}
+
+// fireDownstream triggers downstream tasks that depend on this task.
+func (s *TaskRuntimeService) fireDownstream(ctx context.Context, instance *model.TaskInstance) {
+	downstream, err := s.tasks.ListDownstreamTasks(ctx, instance.TaskID)
+	if err != nil {
+		s.logger.Printf("list downstream tasks failed task_id=%d err=%v", instance.TaskID, err)
+		return
+	}
+	for _, dtID := range downstream {
+		dt, err := s.tasks.GetTask(ctx, dtID)
+		if err != nil {
+			continue
+		}
+		if dt.Status != "enabled" {
+			continue
+		}
+		// Advance next trigger time to now so the trigger loop picks it up.
+		dt.NextTriggerTime = time.Now()
+		if err := s.tasks.UpdateTask(ctx, dt); err != nil {
+			s.logger.Printf("update downstream task next_trigger failed task_id=%d err=%v", dtID, err)
+		}
+		s.logger.Printf("downstream task advanced task_id=%d depends_on=%d", dtID, instance.TaskID)
+	}
 }
 
 func (s *TaskRuntimeService) retryIfNeeded(ctx context.Context, instance *model.TaskInstance, req TaskStatusReportRequest) error {
@@ -140,6 +168,8 @@ func (s *TaskRuntimeService) retryIfNeeded(ctx context.Context, instance *model.
 		TriggerTime:        time.Now(),
 		Status:             "pending",
 		RetryCount:         retryCount,
+		ShardNo:            instance.ShardNo,
+		ShardTotal:         instance.ShardTotal,
 	}
 
 	if delay := retryDelay(task.RetryPolicy, retryCount); delay > 0 {
@@ -183,6 +213,9 @@ func (s *TaskRuntimeService) retryIfNeeded(ctx context.Context, instance *model.
 		Payload:            task.Payload,
 		TimeoutSeconds:     task.TimeoutSeconds,
 		RetryCount:         retryCount,
+		ShardNo:            instance.ShardNo,
+		ShardTotal:         instance.ShardTotal,
+		IdempotencyKey:     task.IdempotencyKey,
 		SchedulerURL:       s.schedulerURL,
 	}); err != nil {
 		_ = s.instances.UpdateInstanceStatus(ctx, retryInstance.ID, "retry_waiting")
