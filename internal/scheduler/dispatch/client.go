@@ -11,6 +11,7 @@ import (
 
 	"github.com/example/go-ai-scheduler/internal/model"
 	"github.com/example/go-ai-scheduler/internal/rpc"
+	"github.com/example/go-ai-scheduler/internal/scheduler/ratelimit"
 	schedulerv1 "github.com/example/go-ai-scheduler/proto/gen/scheduler/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -18,7 +19,8 @@ import (
 
 // Client sends tasks to worker callback endpoints.
 type Client struct {
-	httpClient *http.Client
+	httpClient  *http.Client
+	rateLimiter *ratelimit.TokenBucket
 }
 
 // NewClient creates a dispatch client.
@@ -28,12 +30,30 @@ func NewClient() *Client {
 	}
 }
 
-// Dispatch sends one task to the given worker.
+// NewClientWithRateLimiter creates a dispatch client with rate limiting.
+func NewClientWithRateLimiter(dispatchRatePerSec int) *Client {
+	return &Client{
+		httpClient:  &http.Client{Timeout: 5 * time.Second},
+		rateLimiter: ratelimit.NewTokenBucket(dispatchRatePerSec, dispatchRatePerSec*2),
+	}
+}
+
+// Dispatch sends one task to the given worker. Honors rate limit if configured.
 func (c *Client) Dispatch(ctx context.Context, worker *model.WorkerNode, req rpc.ExecuteTaskRequest) error {
+	if c.rateLimiter != nil {
+		if !c.rateLimiter.Allow() {
+			return fmt.Errorf("dispatch rate limit exceeded, wait %s", c.rateLimiter.WaitTime(1))
+		}
+	}
 	if strings.EqualFold(worker.Protocol, "grpc") {
 		return c.dispatchGRPC(ctx, worker.GRPCAddr, req)
 	}
 	return c.dispatchHTTP(ctx, worker.CallbackURL, req)
+}
+
+// RateLimiter returns the token bucket, or nil if not configured.
+func (c *Client) RateLimiter() *ratelimit.TokenBucket {
+	return c.rateLimiter
 }
 
 func (c *Client) dispatchGRPC(ctx context.Context, target string, req rpc.ExecuteTaskRequest) error {

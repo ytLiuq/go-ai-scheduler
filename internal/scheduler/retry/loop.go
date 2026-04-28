@@ -79,9 +79,9 @@ func (l *Loop) scan(ctx context.Context) {
 		}
 
 		worker, err := l.router.Pick(ctx, route.SelectOptions{
-				Labels:   model.DecodeLabels(task.Labels),
-				Strategy: task.RouteStrategy,
-			})
+			Labels:   model.DecodeLabels(task.Labels),
+			Strategy: task.RouteStrategy,
+		})
 		if err != nil {
 			if err == route.ErrNoAvailableWorker {
 				return
@@ -104,6 +104,9 @@ func (l *Loop) scan(ctx context.Context) {
 			Payload:            task.Payload,
 			TimeoutSeconds:     task.TimeoutSeconds,
 			RetryCount:         instance.RetryCount,
+			ShardNo:            instance.ShardNo,
+			ShardTotal:         instance.ShardTotal,
+			IdempotencyKey:     task.IdempotencyKey,
 			SchedulerURL:       l.schedulerURL,
 		})
 		if err != nil {
