@@ -11,7 +11,7 @@ import (
 )
 
 func TestCronNext(t *testing.T) {
-	router := NewRouter()
+	router := NewRouter(nil)
 
 	body, _ := json.Marshal(map[string]any{
 		"expression": "*/15 * * * *",
@@ -30,7 +30,7 @@ func TestCronNext(t *testing.T) {
 }
 
 func TestAnalyzeLog(t *testing.T) {
-	router := NewRouter()
+	router := NewRouter(nil)
 
 	body, _ := json.Marshal(map[string]any{
 		"log": "request failed: context deadline exceeded",
