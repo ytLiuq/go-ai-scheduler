@@ -40,7 +40,7 @@ func TestHTTPInternalProtocolEndToEnd(t *testing.T) {
 
 	schedulerServer := httptest.NewServer(handler.NewSchedulerRouter(
 		handler.NewWorkerHandler(workerService),
-		handler.NewTaskRuntimeHandler(runtimeService),
+		handler.NewTaskRuntimeHandler(runtimeService), nil,
 	))
 	defer schedulerServer.Close()
 
@@ -50,7 +50,7 @@ func TestHTTPInternalProtocolEndToEnd(t *testing.T) {
 	defer successTarget.Close()
 
 	reportClient := reporter.NewClient("http", "")
-	workerHandler := workerapp.NewHandler("worker-http-1", reportClient, logr)
+	workerHandler := workerapp.NewHandler("worker-http-1", reportClient, logr, workerapp.HandlerConfig{})
 	workerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/internal/tasks/execute":
@@ -93,7 +93,7 @@ func TestHTTPInternalProtocolEndToEnd(t *testing.T) {
 
 	loopCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, schedulerServer.URL, 0).Start(loopCtx)
+	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr,50*time.Millisecond, schedulerServer.URL, 0, nil, nil).Start(loopCtx)
 
 	waitForStatus(t, instanceRepo, "success")
 }
@@ -130,7 +130,7 @@ func TestGRPCInternalProtocolEndToEnd(t *testing.T) {
 	defer successTarget.Close()
 
 	reportClient := reporter.NewClient("grpc", schedulerLis.Addr().String())
-	workerHandler := workerapp.NewHandler("worker-grpc-1", reportClient, logr)
+	workerHandler := workerapp.NewHandler("worker-grpc-1", reportClient, logr, workerapp.HandlerConfig{})
 
 	workerLis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -175,7 +175,7 @@ func TestGRPCInternalProtocolEndToEnd(t *testing.T) {
 
 	loopCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, "", 0).Start(loopCtx)
+	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr,50*time.Millisecond, "", 0, nil, nil).Start(loopCtx)
 
 	waitForStatus(t, instanceRepo, "success")
 }
@@ -193,13 +193,13 @@ func TestHTTPInternalProtocolRetryThenSuccess(t *testing.T) {
 	workerService := apiservice.NewWorkerService(workerRepo)
 	schedulerServer := httptest.NewServer(handler.NewSchedulerRouter(
 		handler.NewWorkerHandler(workerService),
-		nil,
+		nil, nil,
 	))
 	defer schedulerServer.Close()
 	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, nil, schedulerServer.URL, logr)
 	schedulerServer.Config.Handler = handler.NewSchedulerRouter(
 		handler.NewWorkerHandler(workerService),
-		handler.NewTaskRuntimeHandler(runtimeService),
+		handler.NewTaskRuntimeHandler(runtimeService), nil,
 	)
 
 	var requestCount atomic.Int32
@@ -213,7 +213,7 @@ func TestHTTPInternalProtocolRetryThenSuccess(t *testing.T) {
 	defer flakyTarget.Close()
 
 	reportClient := reporter.NewClient("http", "")
-	workerHandler := workerapp.NewHandler("worker-http-retry-1", reportClient, logr)
+	workerHandler := workerapp.NewHandler("worker-http-retry-1", reportClient, logr, workerapp.HandlerConfig{})
 	workerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/internal/tasks/execute":
@@ -254,7 +254,7 @@ func TestHTTPInternalProtocolRetryThenSuccess(t *testing.T) {
 
 	loopCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, schedulerServer.URL, 0).Start(loopCtx)
+	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr,50*time.Millisecond, schedulerServer.URL, 0, nil, nil).Start(loopCtx)
 
 	waitForRetrySuccess(t, instanceRepo)
 }
@@ -296,7 +296,7 @@ func TestGRPCInternalProtocolRetryThenSuccess(t *testing.T) {
 	defer flakyTarget.Close()
 
 	reportClient := reporter.NewClient("grpc", schedulerLis.Addr().String())
-	workerHandler := workerapp.NewHandler("worker-grpc-retry-1", reportClient, logr)
+	workerHandler := workerapp.NewHandler("worker-grpc-retry-1", reportClient, logr, workerapp.HandlerConfig{})
 
 	workerLis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -341,7 +341,7 @@ func TestGRPCInternalProtocolRetryThenSuccess(t *testing.T) {
 
 	loopCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, "", 0).Start(loopCtx)
+	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr,50*time.Millisecond, "", 0, nil, nil).Start(loopCtx)
 
 	waitForRetrySuccess(t, instanceRepo)
 }
@@ -359,13 +359,13 @@ func TestHTTPInternalProtocolTimeoutRetryThenSuccess(t *testing.T) {
 	workerService := apiservice.NewWorkerService(workerRepo)
 	schedulerServer := httptest.NewServer(handler.NewSchedulerRouter(
 		handler.NewWorkerHandler(workerService),
-		nil,
+		nil, nil,
 	))
 	defer schedulerServer.Close()
 	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, nil, schedulerServer.URL, logr)
 	schedulerServer.Config.Handler = handler.NewSchedulerRouter(
 		handler.NewWorkerHandler(workerService),
-		handler.NewTaskRuntimeHandler(runtimeService),
+		handler.NewTaskRuntimeHandler(runtimeService), nil,
 	)
 
 	var requestCount atomic.Int32
@@ -378,7 +378,7 @@ func TestHTTPInternalProtocolTimeoutRetryThenSuccess(t *testing.T) {
 	defer sleepyTarget.Close()
 
 	reportClient := reporter.NewClient("http", "")
-	workerHandler := workerapp.NewHandler("worker-http-timeout-retry-1", reportClient, logr)
+	workerHandler := workerapp.NewHandler("worker-http-timeout-retry-1", reportClient, logr, workerapp.HandlerConfig{})
 	workerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/internal/tasks/execute":
@@ -419,7 +419,7 @@ func TestHTTPInternalProtocolTimeoutRetryThenSuccess(t *testing.T) {
 
 	loopCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, schedulerServer.URL, 0).Start(loopCtx)
+	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr,50*time.Millisecond, schedulerServer.URL, 0, nil, nil).Start(loopCtx)
 
 	waitForRetryStatusSuccess(t, instanceRepo, "timeout")
 }

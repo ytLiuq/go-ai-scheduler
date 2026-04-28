@@ -82,6 +82,9 @@ func Default(serviceName string) Config {
 	if value := os.Getenv("ETCD_ENDPOINTS"); value != "" {
 		cfg.EtcdAddrs = splitEnv(value)
 	}
+	if value := os.Getenv("REDIS_ADDR"); value != "" {
+		cfg.RedisAddr = value
+	}
 	if value := os.Getenv("ALERT_WEBHOOK_URL"); value != "" {
 		cfg.AlertWebhookURL = value
 	}
