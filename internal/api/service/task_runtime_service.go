@@ -160,6 +160,11 @@ func (s *TaskRuntimeService) retryIfNeeded(ctx context.Context, instance *model.
 			task.ID, instance.ScheduleInstanceID, req.ErrorCode)
 		return nil
 	}
+	if retryWindowExceeded(instance, task.RetryWindowSeconds) {
+		s.logger.Printf("retry skipped by total window task_id=%d schedule_instance_id=%s window=%ds",
+			task.ID, instance.ScheduleInstanceID, task.RetryWindowSeconds)
+		return nil
+	}
 
 	retryCount := instance.RetryCount + 1
 	retryInstance := &model.TaskInstance{
@@ -172,7 +177,7 @@ func (s *TaskRuntimeService) retryIfNeeded(ctx context.Context, instance *model.
 		ShardTotal:         instance.ShardTotal,
 	}
 
-	if delay := retryDelay(task.RetryPolicy, retryCount); delay > 0 {
+	if delay := retryDelay(task.RetryPolicy, retryCount, task.RetryIntervalSeconds); delay > 0 {
 		retryInstance.Status = "retry_waiting"
 		retryInstance.NextRetryTime = time.Now().Add(delay)
 		if err := s.instances.CreateInstance(ctx, retryInstance); err != nil {
@@ -230,7 +235,25 @@ func (s *TaskRuntimeService) retryIfNeeded(ctx context.Context, instance *model.
 	return nil
 }
 
-func retryDelay(retryPolicy string, retryCount int) time.Duration {
+// CancelInstance cancels an in-flight task instance and dispatches cancellation to the worker.
+func (s *TaskRuntimeService) CancelInstance(ctx context.Context, scheduleInstanceID string) error {
+	instance, err := s.instances.GetInstanceByScheduleID(ctx, scheduleInstanceID)
+	if err != nil {
+		return err
+	}
+	if isTerminalStatus(instance.Status) {
+		return fmt.Errorf("instance already in terminal state: %s", instance.Status)
+	}
+	if instance.WorkerID != "" {
+		worker, err := s.workers.GetWorker(ctx, instance.WorkerID)
+		if err == nil {
+			_ = s.dispatch.CancelDispatch(ctx, worker, scheduleInstanceID)
+		}
+	}
+	return s.instances.UpdateInstanceResult(ctx, scheduleInstanceID, "cancelled", "cancelled", "cancelled by user")
+}
+
+func retryDelay(retryPolicy string, retryCount int, intervalSeconds int) time.Duration {
 	switch retryPolicy {
 	case "exponential_backoff":
 		d := time.Duration(1<<retryCount) * time.Second
@@ -238,9 +261,23 @@ func retryDelay(retryPolicy string, retryCount int) time.Duration {
 			d = 10 * time.Minute
 		}
 		return d
+	case "fixed_interval":
+		if intervalSeconds > 0 {
+			return time.Duration(intervalSeconds) * time.Second
+		}
+		return 0 // immediate retry when not configured
 	default:
 		return 0
 	}
+}
+
+// retryWindowExceeded checks if the instance has been retrying beyond the allowed window.
+func retryWindowExceeded(instance *model.TaskInstance, windowSeconds int) bool {
+	if windowSeconds <= 0 {
+		return false // no window configured
+	}
+	window := time.Duration(windowSeconds) * time.Second
+	return time.Since(instance.TriggerTime) > window
 }
 
 func shouldRetryOnErrors(retryPolicy, retryOnErrors, errorCode string) bool {

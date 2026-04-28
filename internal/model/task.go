@@ -11,10 +11,12 @@ type Task struct {
 	Payload         string
 	Status          string
 	TimeoutSeconds  int
-	MaxRetry        int
-	RetryPolicy     string
-	RetryOnErrors   string
-	RouteStrategy   string
+	MaxRetry             int
+	RetryPolicy          string
+	RetryOnErrors        string
+	RetryIntervalSeconds int // fixed_interval delay in seconds
+	RetryWindowSeconds   int // total retry window in seconds (0 = unlimited)
+	RouteStrategy        string
 	Labels          string
 	NextTriggerTime time.Time
 	TenantID        int64

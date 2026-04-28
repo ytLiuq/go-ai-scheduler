@@ -51,6 +51,54 @@ func (c *Client) Dispatch(ctx context.Context, worker *model.WorkerNode, req rpc
 	return c.dispatchHTTP(ctx, worker.CallbackURL, req)
 }
 
+// CancelDispatch sends a cancel request to a worker for the given schedule instance.
+func (c *Client) CancelDispatch(ctx context.Context, worker *model.WorkerNode, scheduleInstanceID string) error {
+	if strings.EqualFold(worker.Protocol, "grpc") {
+		return c.cancelGRPC(ctx, worker.GRPCAddr, scheduleInstanceID)
+	}
+	// For HTTP workers, POST to a cancel endpoint.
+	url := strings.TrimRight(worker.CallbackURL, "/") + "/internal/tasks/cancel"
+	body := fmt.Sprintf(`{"schedule_instance_id":"%s"}`, scheduleInstanceID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader([]byte(body)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("cancel dispatch: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("worker returned status %s", resp.Status)
+	}
+	return nil
+}
+
+func (c *Client) cancelGRPC(ctx context.Context, target, scheduleInstanceID string) error {
+	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	conn, err := grpc.DialContext(dialCtx, target,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(),
+	)
+	if err != nil {
+		return fmt.Errorf("dial grpc target %s: %w", target, err)
+	}
+	defer conn.Close()
+	client := schedulerv1.NewExecutorServiceClient(conn)
+	resp, err := client.CancelTask(ctx, &schedulerv1.CancelTaskRequest{
+		ScheduleInstanceId: scheduleInstanceID,
+	})
+	if err != nil {
+		return fmt.Errorf("grpc cancel task: %w", err)
+	}
+	if !resp.GetOk() {
+		return fmt.Errorf("cancel rejected")
+	}
+	return nil
+}
+
 // RateLimiter returns the token bucket, or nil if not configured.
 func (c *Client) RateLimiter() *ratelimit.TokenBucket {
 	return c.rateLimiter

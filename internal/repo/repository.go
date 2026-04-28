@@ -38,6 +38,11 @@ type TaskInstanceRepository interface {
 	UpdateInstanceResult(ctx context.Context, scheduleID string, status string, errorCode string, errorMessage string) error
 }
 
+// AIAnalysisRepository persists AI analysis audit records.
+type AIAnalysisRepository interface {
+	CreateRecord(ctx context.Context, record *model.AIAnalysisRecord) error
+}
+
 // WorkerRepository persists worker liveness and runtime metadata.
 type WorkerRepository interface {
 	UpsertWorker(ctx context.Context, worker *model.WorkerNode) error

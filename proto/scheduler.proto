@@ -10,6 +10,7 @@ service WorkerControlService {
   rpc RegisterWorker(RegisterWorkerRequest) returns (RegisterWorkerResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc ReportTaskStatus(ReportTaskStatusRequest) returns (ReportTaskStatusResponse);
+  rpc ReportTaskLog(ReportTaskLogRequest) returns (ReportTaskLogResponse);
   rpc AckTask(AckTaskRequest) returns (AckTaskResponse);
 }
 
@@ -91,6 +92,20 @@ message AckTaskRequest {
 }
 
 message AckTaskResponse {
+  bool ok = 1;
+}
+
+// --- ReportTaskLog ---
+
+message ReportTaskLogRequest {
+  string schedule_instance_id = 1;
+  string worker_id = 2;
+  string log_level = 3;
+  string log_message = 4;
+  int64 timestamp_unix_seconds = 5;
+}
+
+message ReportTaskLogResponse {
   bool ok = 1;
 }
 

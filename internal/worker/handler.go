@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -28,6 +29,8 @@ type Handler struct {
 	sandboxDir  string
 	maxMemBytes int64
 	localStore  *localstore.Store
+	dedupMap    sync.Map     // map[string]time.Time for schedule_instance_id -> first-seen timestamp
+	cancels     sync.Map     // map[string]context.CancelFunc for in-flight cancellation
 }
 
 // HandlerConfig holds optional configuration for Handler.
@@ -65,6 +68,77 @@ func (h *Handler) LocalStore() *localstore.Store {
 	return h.localStore
 }
 
+// StartDedupEviction starts a periodic goroutine that evicts old entries
+// from the dedup map to prevent unbounded memory growth.
+func (h *Handler) StartDedupEviction(ctx context.Context, ttl, interval time.Duration) {
+	if ttl <= 0 {
+		ttl = 5 * time.Minute
+	}
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				cutoff := time.Now().Add(-ttl)
+				h.dedupMap.Range(func(key, value any) bool {
+					if seen, ok := value.(time.Time); ok && seen.Before(cutoff) {
+						h.dedupMap.Delete(key)
+					}
+					return true
+				})
+			}
+		}
+	}()
+}
+
+// isDuplicate checks if this schedule_instance_id was already seen recently.
+func (h *Handler) isDuplicate(scheduleID string) bool {
+	if _, loaded := h.dedupMap.LoadOrStore(scheduleID, time.Now()); loaded {
+		return true
+	}
+	return false
+}
+
+// Cancel attempts to cancel an in-flight task by schedule_instance_id.
+func (h *Handler) Cancel(scheduleID string) error {
+	if cancel, ok := h.cancels.Load(scheduleID); ok {
+		if fn, ok := cancel.(context.CancelFunc); ok {
+			fn()
+			return nil
+		}
+	}
+	return fmt.Errorf("task not found or already completed: %s", scheduleID)
+}
+
+// CancelHTTP handles POST /internal/tasks/cancel.
+func (h *Handler) CancelHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		ScheduleInstanceID string `json:"schedule_instance_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid body"})
+		return
+	}
+	if err := h.Cancel(req.ScheduleInstanceID); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "cancelled"})
+}
+
 // RunningTasks returns the number of in-flight executions on this worker.
 func (h *Handler) RunningTasks() int {
 	return int(h.running.Load())
@@ -96,8 +170,17 @@ func (h *Handler) ExecuteAsync(_ context.Context, req rpc.ExecuteTaskRequest) {
 }
 
 func (h *Handler) run(req rpc.ExecuteTaskRequest) {
+	// Local dedup: reject duplicate schedule_instance_id.
+	if h.isDuplicate(req.ScheduleInstanceID) {
+		h.logger.Printf("duplicate task rejected schedule_instance_id=%s", req.ScheduleInstanceID)
+		return
+	}
+
 	h.running.Add(1)
 	defer h.running.Add(-1)
+
+	// Acknowledge task receipt.
+	_ = h.reporter.Ack(context.Background(), req.SchedulerURL, req.ScheduleInstanceID, h.workerID)
 
 	runningReq := apiservice.TaskStatusReportRequest{
 		ScheduleInstanceID: req.ScheduleInstanceID,
@@ -114,6 +197,8 @@ func (h *Handler) run(req rpc.ExecuteTaskRequest) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	defer h.cancels.Delete(req.ScheduleInstanceID)
+	h.cancels.Store(req.ScheduleInstanceID, cancel)
 
 	statusReq := apiservice.TaskStatusReportRequest{
 		ScheduleInstanceID: req.ScheduleInstanceID,

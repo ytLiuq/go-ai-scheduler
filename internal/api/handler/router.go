@@ -1,7 +1,10 @@
 package handler
 
 import (
+	"io"
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/example/go-ai-scheduler/internal/api/middleware"
 	"github.com/example/go-ai-scheduler/internal/pkg/metrics"
@@ -17,6 +20,8 @@ func NewSchedulerRouter(workerHandler *WorkerHandler, taskRuntimeHandler *TaskRu
 	mux.HandleFunc("/api/v1/workers/heartbeat", workerHandler.Heartbeat)
 	mux.HandleFunc("/api/v1/task-instances/report", taskRuntimeHandler.Report)
 	mux.HandleFunc("POST /api/v1/events/publish", eventHandler.Publish)
+	mux.HandleFunc("POST /api/v1/task-instances/cancel", taskRuntimeHandler.Cancel)
+	mux.HandleFunc("POST /api/v1/task-instances/ack", taskRuntimeHandler.Ack)
 	return metrics.Instrument("scheduler", mux)
 }
 
@@ -42,6 +47,14 @@ func NewAPIRouter(authHandler *AuthHandler, workerHandler *WorkerHandler, taskHa
 	mux.HandleFunc("POST /api/v1/tasks/{id}/trigger", requireAuth("operator", taskHandler.Trigger))
 	mux.HandleFunc("GET /api/v1/task-instances", requireAuth("viewer", taskInstanceHandler.List))
 	mux.HandleFunc("GET /api/v1/task-instances/", requireAuth("viewer", taskInstanceHandler.Get))
+
+	// AI endpoints proxied to ai-service.
+	mux.HandleFunc("POST /api/v1/ai/cron/parse", requireAuth("viewer", proxyAIHandler("cron/parse")))
+	mux.HandleFunc("POST /api/v1/ai/log-analysis/analyze", requireAuth("viewer", proxyAIHandler("log-analysis/analyze")))
+	mux.HandleFunc("POST /api/v1/ai/advisor/generate", requireAuth("viewer", proxyAIHandler("advisor/generate")))
+
+	// Serve web console static files.
+	mux.Handle("/", http.FileServer(http.Dir("web")))
 
 	return metrics.Instrument("api", tenant.Middleware(mux))
 }
@@ -86,4 +99,48 @@ func requireAuth(minimumRole string, next http.HandlerFunc) http.HandlerFunc {
 
 func hasBearerPrefix(s string) bool {
 	return len(s) >= 7 && s[:7] == "Bearer "
+}
+
+// proxyAIHandler returns a handler that reverse-proxies to the AI service.
+func proxyAIHandler(path string) http.HandlerFunc {
+	aiServiceURL := os.Getenv("AI_SERVICE_URL")
+	if aiServiceURL == "" {
+		aiServiceURL = "http://127.0.0.1:8083"
+	}
+	target := strings.TrimRight(aiServiceURL, "/") + "/api/v1/" + path
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		r.Body.Close()
+
+		proxyReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, io.NopCloser(strings.NewReader(string(body))))
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":"proxy error"}`))
+			return
+		}
+		proxyReq.Header.Set("Content-Type", "application/json")
+		// Forward tracing header.
+		if traceID := r.Header.Get("X-Trace-ID"); traceID != "" {
+			proxyReq.Header.Set("X-Trace-ID", traceID)
+		}
+
+		resp, err := http.DefaultClient.Do(proxyReq)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":"ai service unreachable"}`))
+			return
+		}
+		defer resp.Body.Close()
+
+		for k, vs := range resp.Header {
+			for _, v := range vs {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	}
 }

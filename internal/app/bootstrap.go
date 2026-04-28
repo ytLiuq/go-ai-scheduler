@@ -54,6 +54,7 @@ func BuildResources(cfg config.Config, l *log.Logger) (*Resources, func()) {
 			Task:         memory.NewTaskRepository(),
 			TaskInstance: memory.NewTaskInstanceRepository(),
 			Worker:       memory.NewWorkerRepository(),
+		AIAnalysis:   memory.NewAIAnalysisRepository(),
 		}
 		if err := repo.ValidateBundle(bundle); err != nil {
 			log.Fatalf("invalid memory repository bundle: %v", err)

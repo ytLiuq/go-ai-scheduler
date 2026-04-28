@@ -22,6 +22,7 @@ const (
 	WorkerControlService_RegisterWorker_FullMethodName   = "/scheduler.v1.WorkerControlService/RegisterWorker"
 	WorkerControlService_Heartbeat_FullMethodName        = "/scheduler.v1.WorkerControlService/Heartbeat"
 	WorkerControlService_ReportTaskStatus_FullMethodName = "/scheduler.v1.WorkerControlService/ReportTaskStatus"
+	WorkerControlService_ReportTaskLog_FullMethodName    = "/scheduler.v1.WorkerControlService/ReportTaskLog"
 	WorkerControlService_AckTask_FullMethodName          = "/scheduler.v1.WorkerControlService/AckTask"
 )
 
@@ -32,6 +33,7 @@ type WorkerControlServiceClient interface {
 	RegisterWorker(ctx context.Context, in *RegisterWorkerRequest, opts ...grpc.CallOption) (*RegisterWorkerResponse, error)
 	Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
 	ReportTaskStatus(ctx context.Context, in *ReportTaskStatusRequest, opts ...grpc.CallOption) (*ReportTaskStatusResponse, error)
+	ReportTaskLog(ctx context.Context, in *ReportTaskLogRequest, opts ...grpc.CallOption) (*ReportTaskLogResponse, error)
 	AckTask(ctx context.Context, in *AckTaskRequest, opts ...grpc.CallOption) (*AckTaskResponse, error)
 }
 
@@ -73,6 +75,16 @@ func (c *workerControlServiceClient) ReportTaskStatus(ctx context.Context, in *R
 	return out, nil
 }
 
+func (c *workerControlServiceClient) ReportTaskLog(ctx context.Context, in *ReportTaskLogRequest, opts ...grpc.CallOption) (*ReportTaskLogResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReportTaskLogResponse)
+	err := c.cc.Invoke(ctx, WorkerControlService_ReportTaskLog_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *workerControlServiceClient) AckTask(ctx context.Context, in *AckTaskRequest, opts ...grpc.CallOption) (*AckTaskResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AckTaskResponse)
@@ -90,6 +102,7 @@ type WorkerControlServiceServer interface {
 	RegisterWorker(context.Context, *RegisterWorkerRequest) (*RegisterWorkerResponse, error)
 	Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
 	ReportTaskStatus(context.Context, *ReportTaskStatusRequest) (*ReportTaskStatusResponse, error)
+	ReportTaskLog(context.Context, *ReportTaskLogRequest) (*ReportTaskLogResponse, error)
 	AckTask(context.Context, *AckTaskRequest) (*AckTaskResponse, error)
 	mustEmbedUnimplementedWorkerControlServiceServer()
 }
@@ -109,6 +122,9 @@ func (UnimplementedWorkerControlServiceServer) Heartbeat(context.Context, *Heart
 }
 func (UnimplementedWorkerControlServiceServer) ReportTaskStatus(context.Context, *ReportTaskStatusRequest) (*ReportTaskStatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReportTaskStatus not implemented")
+}
+func (UnimplementedWorkerControlServiceServer) ReportTaskLog(context.Context, *ReportTaskLogRequest) (*ReportTaskLogResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReportTaskLog not implemented")
 }
 func (UnimplementedWorkerControlServiceServer) AckTask(context.Context, *AckTaskRequest) (*AckTaskResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AckTask not implemented")
@@ -188,6 +204,24 @@ func _WorkerControlService_ReportTaskStatus_Handler(srv interface{}, ctx context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _WorkerControlService_ReportTaskLog_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReportTaskLogRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerControlServiceServer).ReportTaskLog(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkerControlService_ReportTaskLog_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerControlServiceServer).ReportTaskLog(ctx, req.(*ReportTaskLogRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _WorkerControlService_AckTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AckTaskRequest)
 	if err := dec(in); err != nil {
@@ -224,6 +258,10 @@ var WorkerControlService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReportTaskStatus",
 			Handler:    _WorkerControlService_ReportTaskStatus_Handler,
+		},
+		{
+			MethodName: "ReportTaskLog",
+			Handler:    _WorkerControlService_ReportTaskLog_Handler,
 		},
 		{
 			MethodName: "AckTask",

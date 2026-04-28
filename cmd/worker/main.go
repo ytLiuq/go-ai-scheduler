@@ -49,6 +49,8 @@ func main() {
 				metrics.DefaultRegistry.Handler().ServeHTTP(w, r)
 			case "/internal/tasks/execute":
 				workerHandler.Execute(w, r)
+			case "/internal/tasks/cancel":
+				workerHandler.CancelHTTP(w, r)
 			default:
 				http.NotFound(w, r)
 			}
@@ -80,6 +82,8 @@ func main() {
 		go ls.StartFlushLoop(ctx, 30*time.Second)
 		l.Printf("local store enabled, flush loop started")
 	}
+	workerHandler.StartDedupEviction(ctx, 5*time.Minute, 30*time.Second)
+	l.Printf("worker dedup eviction started")
 
 	registerReq := apiservice.WorkerRegistrationRequest{
 		WorkerID:       workerID,

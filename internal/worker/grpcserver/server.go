@@ -7,6 +7,8 @@ import (
 	"github.com/example/go-ai-scheduler/internal/rpc"
 	workerapp "github.com/example/go-ai-scheduler/internal/worker"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Server exposes worker execution RPCs to the scheduler.
@@ -37,4 +39,16 @@ func (s *Server) ExecuteTask(ctx context.Context, req *schedulerv1.ExecuteTaskRe
 		SchedulerURL:       req.GetSchedulerUrl(),
 	})
 	return &schedulerv1.ExecuteTaskResponse{Accepted: true}, nil
+}
+
+// CancelTask cancels an in-flight task by its schedule instance ID.
+func (s *Server) CancelTask(ctx context.Context, req *schedulerv1.CancelTaskRequest) (*schedulerv1.CancelTaskResponse, error) {
+	scheduleID := req.GetScheduleInstanceId()
+	if scheduleID == "" {
+		return nil, status.Error(codes.InvalidArgument, "schedule_instance_id is required")
+	}
+	if err := s.handler.Cancel(scheduleID); err != nil {
+		return &schedulerv1.CancelTaskResponse{Ok: false}, nil
+	}
+	return &schedulerv1.CancelTaskResponse{Ok: true}, nil
 }

@@ -13,6 +13,7 @@ type Bundle struct {
 	Task         TaskRepository
 	TaskInstance TaskInstanceRepository
 	Worker       WorkerRepository
+	AIAnalysis   AIAnalysisRepository
 }
 
 // NewMySQLBundle builds repositories backed by one MySQL connection pool.
@@ -21,6 +22,7 @@ func NewMySQLBundle(db *sql.DB) *Bundle {
 		Task:         mysqlrepo.NewTaskRepository(db),
 		TaskInstance: mysqlrepo.NewTaskInstanceRepository(db),
 		Worker:       mysqlrepo.NewWorkerRepository(db),
+		AIAnalysis:   mysqlrepo.NewAIAnalysisRepository(db),
 	}
 }
 
@@ -31,7 +33,7 @@ func IsMySQLBackend(value string) bool {
 
 // ValidateBundle ensures all repositories are wired.
 func ValidateBundle(bundle *Bundle) error {
-	if bundle == nil || bundle.Task == nil || bundle.TaskInstance == nil || bundle.Worker == nil {
+	if bundle == nil || bundle.Task == nil || bundle.TaskInstance == nil || bundle.Worker == nil || bundle.AIAnalysis == nil {
 		return fmt.Errorf("repository bundle is incomplete")
 	}
 	return nil

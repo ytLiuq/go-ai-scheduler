@@ -2,6 +2,7 @@ package grpcserver
 
 import (
 	"context"
+	"log"
 
 	"github.com/example/go-ai-scheduler/internal/api/service"
 	schedulerv1 "github.com/example/go-ai-scheduler/proto/gen/scheduler/v1"
@@ -70,4 +71,17 @@ func (s *Server) ReportTaskStatus(ctx context.Context, req *schedulerv1.ReportTa
 		return &schedulerv1.ReportTaskStatusResponse{Ok: false}, nil
 	}
 	return &schedulerv1.ReportTaskStatusResponse{Ok: true}, nil
+}
+
+// AckTask acknowledges worker receipt of a task dispatch.
+func (s *Server) AckTask(ctx context.Context, req *schedulerv1.AckTaskRequest) (*schedulerv1.AckTaskResponse, error) {
+	log.Printf("task acked by worker schedule_instance_id=%s worker_id=%s", req.GetScheduleInstanceId(), req.GetWorkerId())
+	return &schedulerv1.AckTaskResponse{Ok: true}, nil
+}
+
+// ReportTaskLog receives log messages from workers during task execution.
+func (s *Server) ReportTaskLog(ctx context.Context, req *schedulerv1.ReportTaskLogRequest) (*schedulerv1.ReportTaskLogResponse, error) {
+	log.Printf("task log schedule_instance_id=%s worker_id=%s level=%s msg=%s",
+		req.GetScheduleInstanceId(), req.GetWorkerId(), req.GetLogLevel(), req.GetLogMessage())
+	return &schedulerv1.ReportTaskLogResponse{Ok: true}, nil
 }

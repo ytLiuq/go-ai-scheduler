@@ -150,7 +150,7 @@ func TestTaskServiceTriggerDisabledTaskFails(t *testing.T) {
 }
 
 func TestRetryDelayFixedInterval(t *testing.T) {
-	if d := retryDelay("fixed_interval", 3); d != 0 {
+	if d := retryDelay("fixed_interval", 3, 0); d != 0 {
 		t.Fatalf("expected 0 delay for fixed_interval, got %v", d)
 	}
 }
@@ -166,7 +166,7 @@ func TestRetryDelayExponentialBackoff(t *testing.T) {
 		{4, 16 * time.Second},
 	}
 	for _, tc := range tests {
-		d := retryDelay("exponential_backoff", tc.retryCount)
+		d := retryDelay("exponential_backoff", tc.retryCount, 0)
 		if d != tc.expected {
 			t.Fatalf("retry_count=%d: expected %v, got %v", tc.retryCount, tc.expected, d)
 		}
@@ -174,7 +174,7 @@ func TestRetryDelayExponentialBackoff(t *testing.T) {
 }
 
 func TestRetryDelayExponentialBackoffCap(t *testing.T) {
-	d := retryDelay("exponential_backoff", 20)
+	d := retryDelay("exponential_backoff", 20, 0)
 	if d != 10*time.Minute {
 		t.Fatalf("expected cap at 10m, got %v", d)
 	}
