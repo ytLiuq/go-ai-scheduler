@@ -31,7 +31,12 @@ func main() {
 	workerID := fmt.Sprintf("%s-%d", hostname, time.Now().UnixNano())
 	client := heartbeat.NewClient(cfg.SchedulerURL, cfg.SchedulerGRPCAddr, cfg.InternalProtocol)
 	reportClient := reporter.NewClient(cfg.InternalProtocol, cfg.SchedulerGRPCAddr)
-	workerHandler := workerapp.NewHandler(workerID, reportClient, l)
+	workerHandler := workerapp.NewHandler(workerID, reportClient, l, workerapp.HandlerConfig{
+		SandboxDir:     os.TempDir(),
+		MaxMemoryBytes: 256 * 1024 * 1024,
+		LocalStoreDir:  os.TempDir(),
+	})
+
 	server := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: metrics.Instrument("worker", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +75,11 @@ func main() {
 	}()
 
 	ctx := context.Background()
+
+	if ls := workerHandler.LocalStore(); ls != nil {
+		go ls.StartFlushLoop(ctx, 30*time.Second)
+		l.Printf("local store enabled, flush loop started")
+	}
 
 	registerReq := apiservice.WorkerRegistrationRequest{
 		WorkerID:       workerID,
