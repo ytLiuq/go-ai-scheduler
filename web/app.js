@@ -1,6 +1,6 @@
 const API = '';
 
-const { createApp, ref, reactive, onMounted, watch } = Vue;
+const { createApp, ref, reactive, onMounted } = Vue;
 
 createApp({
   setup() {
@@ -17,6 +17,27 @@ createApp({
     const instances = ref([]);
     const taskModal = ref(null);
     const editingTask = reactive({ name: '', type: 'shell', cron_expr: '', payload: '', timeout_seconds: 300, max_retry: 3, retry_policy: 'fixed_interval', route_strategy: 'least_loaded' });
+    const aiLoading = reactive({ cron: false, log: false, advisor: false });
+    const aiCron = reactive({ input: 'every 5 minutes', result: '', resultObj: null });
+    const aiLog = reactive({
+      log: 'dial tcp 10.0.0.8:443: connection refused',
+      error_code: 'conn_refused',
+      task_type: 'http',
+      retry_count: 1,
+      result: '',
+      resultObj: null
+    });
+    const aiAdvisor = reactive({
+      avg_worker_load: 0.82,
+      total_workers: 12,
+      online_workers: 10,
+      pending_instances: 950,
+      failed_last_hour: 14,
+      avg_dispatch_latency_ms: 126,
+      max_pending_config: 1000,
+      result: '',
+      resultObj: null
+    });
 
     const headers = () => token.value ? { 'Authorization': 'Bearer ' + token.value, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
 
@@ -97,6 +118,73 @@ createApp({
       alert('Task triggered');
     }
 
+    function formatResult(data) {
+      return JSON.stringify(data, null, 2);
+    }
+
+    function formatPercent(value) {
+      if (typeof value !== 'number' || Number.isNaN(value)) return '--';
+      return Math.round(value * 100) + '%';
+    }
+
+    async function runCronParse() {
+      aiLoading.cron = true;
+      aiCron.resultObj = null;
+      try {
+        const data = await api('/api/v1/ai/cron/parse', 'POST', { input: aiCron.input });
+        aiCron.resultObj = data;
+        aiCron.result = formatResult(data);
+      } catch (e) {
+        aiCron.resultObj = null;
+        aiCron.result = 'Error: ' + e.message;
+      } finally {
+        aiLoading.cron = false;
+      }
+    }
+
+    async function runLogAnalysis() {
+      aiLoading.log = true;
+      aiLog.resultObj = null;
+      try {
+        const data = await api('/api/v1/ai/log-analysis/analyze', 'POST', {
+          log: aiLog.log,
+          error_code: aiLog.error_code,
+          task_type: aiLog.task_type,
+          retry_count: aiLog.retry_count
+        });
+        aiLog.resultObj = data;
+        aiLog.result = formatResult(data);
+      } catch (e) {
+        aiLog.resultObj = null;
+        aiLog.result = 'Error: ' + e.message;
+      } finally {
+        aiLoading.log = false;
+      }
+    }
+
+    async function runAdvisor() {
+      aiLoading.advisor = true;
+      aiAdvisor.resultObj = null;
+      try {
+        const data = await api('/api/v1/ai/advisor/generate', 'POST', {
+          avg_worker_load: aiAdvisor.avg_worker_load,
+          total_workers: aiAdvisor.total_workers,
+          online_workers: aiAdvisor.online_workers,
+          pending_instances: aiAdvisor.pending_instances,
+          failed_last_hour: aiAdvisor.failed_last_hour,
+          avg_dispatch_latency_ms: aiAdvisor.avg_dispatch_latency_ms,
+          max_pending_config: aiAdvisor.max_pending_config
+        });
+        aiAdvisor.resultObj = data;
+        aiAdvisor.result = formatResult(data);
+      } catch (e) {
+        aiAdvisor.resultObj = null;
+        aiAdvisor.result = 'Error: ' + e.message;
+      } finally {
+        aiLoading.advisor = false;
+      }
+    }
+
     onMounted(() => {
       if (token.value) {
         loadTasks();
@@ -105,6 +193,11 @@ createApp({
       }
     });
 
-    return { token, role, loginUser, loginPass, loginError, tab, stats, tasks, workers, instances, taskModal, editingTask, doLogin, logout, loadTasks, loadWorkers, loadInstances, showTaskModal, saveTask, toggleTask, triggerTask };
+    return {
+      token, role, loginUser, loginPass, loginError, tab, stats, tasks, workers, instances,
+      taskModal, editingTask, aiLoading, aiCron, aiLog, aiAdvisor,
+      doLogin, logout, loadTasks, loadWorkers, loadInstances, showTaskModal, saveTask,
+      toggleTask, triggerTask, runCronParse, runLogAnalysis, runAdvisor, formatPercent
+    };
   }
 }).mount('#app');

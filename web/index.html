@@ -39,6 +39,17 @@ tr:hover{background:#f7fafc}
 .form-group input,.form-group select,.form-group textarea{width:100%;padding:8px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 textarea{resize:vertical;min-height:60px}
+.split{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:20px}
+.result-box{background:#f7fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px;min-height:120px;white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:1.5}
+.ai-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:16px}
+.ai-stat{background:#f7fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px}
+.ai-stat .k{font-size:11px;color:#718096;text-transform:uppercase;letter-spacing:.04em}
+.ai-stat .v{font-size:16px;font-weight:700;color:#1a1a2e;margin-top:6px}
+.ai-list{display:grid;gap:10px;margin-top:16px}
+.ai-item{background:#f7fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px}
+.ai-item h4{font-size:14px;color:#1a1a2e;margin-bottom:6px}
+.ai-item p{font-size:13px;line-height:1.5;color:#4a5568}
+.muted{font-size:12px;color:#718096}
 .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:1000}
 .modal{background:#fff;border-radius:12px;padding:24px;width:600px;max-height:80vh;overflow-y:auto}
 </style>
@@ -67,6 +78,7 @@ textarea{resize:vertical;min-height:60px}
     <button :class="{active: tab==='tasks'}" @click="tab='tasks';loadTasks()">Tasks</button>
     <button :class="{active: tab==='workers'}" @click="tab='workers';loadWorkers()">Workers</button>
     <button :class="{active: tab==='instances'}" @click="tab='instances';loadInstances()">Instances</button>
+    <button :class="{active: tab==='ai'}" @click="tab='ai'">AI Tools</button>
   </div>
 
   <div class="main">
@@ -139,6 +151,145 @@ textarea{resize:vertical;min-height:60px}
             </tr>
           </tbody>
         </table>
+      </div>
+    </template>
+
+    <!-- AI Tools -->
+    <template v-if="tab==='ai'">
+      <div class="split">
+        <div class="card">
+          <h3>Cron Parser</h3>
+          <div class="form-group">
+            <label>Natural Language</label>
+            <textarea v-model="aiCron.input" placeholder="every weekday at 9am"></textarea>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn btn-primary" @click="runCronParse" :disabled="aiLoading.cron">Parse</button>
+            <span class="muted" v-if="aiLoading.cron">Running...</span>
+          </div>
+          <div class="form-group" style="margin-top:16px">
+            <label>Result</label>
+            <div v-if="aiCron.resultObj">
+              <div class="ai-grid">
+                <div class="ai-stat">
+                  <div class="k">Cron</div>
+                  <div class="v">{{aiCron.resultObj.cron_expression || '--'}}</div>
+                </div>
+                <div class="ai-stat">
+                  <div class="k">Confidence</div>
+                  <div class="v">{{formatPercent(aiCron.resultObj.confidence)}}</div>
+                </div>
+              </div>
+              <div class="ai-item" style="margin-top:12px">
+                <h4>Explanation</h4>
+                <p>{{aiCron.resultObj.explanation || '--'}}</p>
+              </div>
+            </div>
+            <div class="result-box" v-else>{{aiCron.result || 'No result yet.'}}</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Log Analysis</h3>
+          <div class="form-group">
+            <label>Error Log</label>
+            <textarea v-model="aiLog.log" placeholder="dial tcp 10.0.0.8:443: connection refused"></textarea>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label>Error Code</label><input v-model="aiLog.error_code" placeholder="conn_refused"></div>
+            <div class="form-group"><label>Task Type</label><input v-model="aiLog.task_type" placeholder="http"></div>
+          </div>
+          <div class="form-group">
+            <label>Retry Count</label>
+            <input type="number" v-model.number="aiLog.retry_count">
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn btn-primary" @click="runLogAnalysis" :disabled="aiLoading.log">Analyze</button>
+            <span class="muted" v-if="aiLoading.log">Running...</span>
+          </div>
+          <div class="form-group" style="margin-top:16px">
+            <label>Result</label>
+            <div v-if="aiLog.resultObj">
+              <div class="ai-grid">
+                <div class="ai-stat">
+                  <div class="k">Severity</div>
+                  <div class="v">{{aiLog.resultObj.severity || '--'}}</div>
+                </div>
+                <div class="ai-stat">
+                  <div class="k">Confidence</div>
+                  <div class="v">{{formatPercent(aiLog.resultObj.confidence)}}</div>
+                </div>
+              </div>
+              <div class="ai-item" style="margin-top:12px">
+                <h4>Summary</h4>
+                <p>{{aiLog.resultObj.summary || '--'}}</p>
+              </div>
+              <div class="ai-item" style="margin-top:12px">
+                <h4>Root Cause</h4>
+                <p>{{aiLog.resultObj.root_cause || '--'}}</p>
+              </div>
+              <div class="ai-item" style="margin-top:12px">
+                <h4>Fix</h4>
+                <p>{{aiLog.resultObj.fix || '--'}}</p>
+              </div>
+              <div class="ai-item" style="margin-top:12px">
+                <h4>Categories</h4>
+                <p>{{(aiLog.resultObj.categories || []).join(', ') || '--'}}</p>
+              </div>
+            </div>
+            <div class="result-box" v-else>{{aiLog.result || 'No result yet.'}}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Advisor</h3>
+        <div class="form-row">
+          <div class="form-group"><label>Avg Worker Load</label><input type="number" step="0.01" v-model.number="aiAdvisor.avg_worker_load"></div>
+          <div class="form-group"><label>Total Workers</label><input type="number" v-model.number="aiAdvisor.total_workers"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Online Workers</label><input type="number" v-model.number="aiAdvisor.online_workers"></div>
+          <div class="form-group"><label>Pending Instances</label><input type="number" v-model.number="aiAdvisor.pending_instances"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Failed Last Hour</label><input type="number" v-model.number="aiAdvisor.failed_last_hour"></div>
+          <div class="form-group"><label>Avg Dispatch Latency (ms)</label><input type="number" step="0.1" v-model.number="aiAdvisor.avg_dispatch_latency_ms"></div>
+        </div>
+        <div class="form-group">
+          <label>Max Pending Config</label>
+          <input type="number" v-model.number="aiAdvisor.max_pending_config">
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn-primary" @click="runAdvisor" :disabled="aiLoading.advisor">Generate Advice</button>
+          <span class="muted" v-if="aiLoading.advisor">Running...</span>
+        </div>
+        <div class="form-group" style="margin-top:16px">
+          <label>Result</label>
+          <div v-if="aiAdvisor.resultObj && aiAdvisor.resultObj.advices && aiAdvisor.resultObj.advices.length">
+            <div class="ai-list">
+              <div class="ai-item" v-for="(advice, idx) in aiAdvisor.resultObj.advices" :key="idx">
+                <h4>{{advice.title || advice.type || 'Advice'}}</h4>
+                <p>{{advice.description || '--'}}</p>
+                <div class="ai-grid">
+                  <div class="ai-stat">
+                    <div class="k">Type</div>
+                    <div class="v">{{advice.type || '--'}}</div>
+                  </div>
+                  <div class="ai-stat">
+                    <div class="k">Confidence</div>
+                    <div class="v">{{formatPercent(advice.confidence)}}</div>
+                  </div>
+                  <div class="ai-stat">
+                    <div class="k">Auto Apply</div>
+                    <div class="v">{{advice.auto_apply ? 'Yes' : 'No'}}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="result-box" v-else>{{aiAdvisor.result || 'No result yet.'}}</div>
+        </div>
       </div>
     </template>
   </div>
