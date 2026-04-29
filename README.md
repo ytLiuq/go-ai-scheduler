@@ -143,7 +143,22 @@ export REDIS_ADDR='127.0.0.1:6379'
 Use `go run ./cmd/migrate` to apply migrations explicitly before starting services.
 Keeping `AUTO_MIGRATE=false` avoids rerunning non-idempotent migrations on every boot.
 
-Start `ai-service`:
+You can start both the web console API and `ai-service` with one command:
+
+```bash
+cd /root/workspace/go-ai-scheduler
+source .env.ai-service
+make run-console
+```
+
+This runs:
+
+- `ai-service` on `:8083`
+- `api` on `:8082`
+
+The script lives at `scripts/run-console.sh` and stops both processes together when you press `Ctrl+C`.
+
+If you only want to start `ai-service`:
 
 ```bash
 cd /root/workspace/go-ai-scheduler
@@ -157,7 +172,7 @@ If you want the external `api` service to proxy AI requests to `ai-service`, con
 export AI_SERVICE_URL='http://127.0.0.1:8083'
 ```
 
-Then start `api` in a separate terminal:
+If you only want to start `api`:
 
 ```bash
 cd /root/workspace/go-ai-scheduler
@@ -185,6 +200,30 @@ Current AI helper endpoints include:
 - `POST /api/v1/log-analysis/analyze`
 - `POST /api/v1/advisor/generate`
 - `POST /api/v1/cron/next`
+
+## Web Console
+
+The management UI is served by the `api` service at:
+
+```text
+http://127.0.0.1:8082
+```
+
+Demo login accounts:
+
+- `admin / admin123`
+- `operator / operator123`
+- `viewer / viewer123`
+
+Current console features:
+
+- dashboard summary for tasks, workers, and recent instances
+- task list, create, edit, pause, resume, and manual trigger
+- worker list and load view
+- task instance list
+- AI tools for cron parsing, log analysis, and scheduling advice
+
+The AI tools page uses the proxied API endpoints and renders structured results in the console instead of raw JSON.
 
 ## Internal Transport
 
