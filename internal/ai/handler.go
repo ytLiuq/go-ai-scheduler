@@ -45,6 +45,7 @@ type advisorRequest struct {
 func NewRouter(llm *adapter.LLMAdapter, aiRepo repo.AIAnalysisRepository) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", health)
+	mux.HandleFunc("GET /api/v1/status", func(w http.ResponseWriter, r *http.Request) { status(w, r, llm) })
 	mux.Handle("/metrics", metrics.DefaultRegistry.Handler())
 	mux.HandleFunc("/api/v1/cron/next", cronNext)
 	mux.HandleFunc("POST /api/v1/cron/parse", func(w http.ResponseWriter, r *http.Request) { parseCronNatural(w, r, llm, aiRepo) })
@@ -55,6 +56,27 @@ func NewRouter(llm *adapter.LLMAdapter, aiRepo repo.AIAnalysisRepository) http.H
 
 func health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func status(w http.ResponseWriter, _ *http.Request, llm *adapter.LLMAdapter) {
+	mode := "heuristics"
+	model := ""
+	endpoint := ""
+	if llm != nil && llm.Enabled() {
+		mode = "llm"
+		model = llm.Model()
+		endpoint = llm.Endpoint()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":          "ok",
+		"service":         "ai-service",
+		"mode":            mode,
+		"llm_enabled":     llm != nil && llm.Enabled(),
+		"model":           model,
+		"endpoint":        endpoint,
+		"api_key_present": llm != nil && llm.HasAPIKey(),
+		"server_time":     time.Now().UTC().Format(time.RFC3339),
+	})
 }
 
 func cronNext(w http.ResponseWriter, r *http.Request) {

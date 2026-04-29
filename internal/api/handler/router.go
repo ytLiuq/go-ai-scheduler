@@ -49,6 +49,7 @@ func NewAPIRouter(authHandler *AuthHandler, workerHandler *WorkerHandler, taskHa
 	mux.HandleFunc("GET /api/v1/task-instances/", requireAuth("viewer", taskInstanceHandler.Get))
 
 	// AI endpoints proxied to ai-service.
+	mux.HandleFunc("GET /api/v1/ai/status", requireAuth("viewer", proxyAIHandler(http.MethodGet, "status")))
 	mux.HandleFunc("POST /api/v1/ai/cron/parse", requireAuth("viewer", proxyAIHandler("cron/parse")))
 	mux.HandleFunc("POST /api/v1/ai/log-analysis/analyze", requireAuth("viewer", proxyAIHandler("log-analysis/analyze")))
 	mux.HandleFunc("POST /api/v1/ai/advisor/generate", requireAuth("viewer", proxyAIHandler("advisor/generate")))
@@ -102,10 +103,16 @@ func hasBearerPrefix(s string) bool {
 }
 
 // proxyAIHandler returns a handler that reverse-proxies to the AI service.
-func proxyAIHandler(path string) http.HandlerFunc {
+func proxyAIHandler(methodOrPath string, maybePath ...string) http.HandlerFunc {
 	aiServiceURL := os.Getenv("AI_SERVICE_URL")
 	if aiServiceURL == "" {
 		aiServiceURL = "http://127.0.0.1:8083"
+	}
+	method := http.MethodPost
+	path := methodOrPath
+	if len(maybePath) > 0 {
+		method = methodOrPath
+		path = maybePath[0]
 	}
 	target := strings.TrimRight(aiServiceURL, "/") + "/api/v1/" + path
 
@@ -113,14 +120,16 @@ func proxyAIHandler(path string) http.HandlerFunc {
 		body, _ := io.ReadAll(r.Body)
 		r.Body.Close()
 
-		proxyReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, io.NopCloser(strings.NewReader(string(body))))
+		proxyReq, err := http.NewRequestWithContext(r.Context(), method, target, io.NopCloser(strings.NewReader(string(body))))
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadGateway)
 			_, _ = w.Write([]byte(`{"error":"proxy error"}`))
 			return
 		}
-		proxyReq.Header.Set("Content-Type", "application/json")
+		if method != http.MethodGet {
+			proxyReq.Header.Set("Content-Type", "application/json")
+		}
 		// Forward tracing header.
 		if traceID := r.Header.Get("X-Trace-ID"); traceID != "" {
 			proxyReq.Header.Set("X-Trace-ID", traceID)

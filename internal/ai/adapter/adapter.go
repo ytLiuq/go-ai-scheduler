@@ -50,6 +50,27 @@ func (a *LLMAdapter) Enabled() bool {
 	return a != nil && a.endpoint != ""
 }
 
+// Endpoint returns the configured API base URL.
+func (a *LLMAdapter) Endpoint() string {
+	if a == nil {
+		return ""
+	}
+	return a.endpoint
+}
+
+// Model returns the configured model name.
+func (a *LLMAdapter) Model() string {
+	if a == nil {
+		return ""
+	}
+	return a.model
+}
+
+// HasAPIKey reports whether a non-empty API key is configured.
+func (a *LLMAdapter) HasAPIKey() bool {
+	return a != nil && a.apiKey != ""
+}
+
 // ChatRequest is an OpenAI-compatible chat completion request.
 type ChatRequest struct {
 	Model    string    `json:"model"`
