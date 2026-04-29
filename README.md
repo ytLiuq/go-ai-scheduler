@@ -96,6 +96,96 @@ REPO_BACKEND=mysql go run ./cmd/migrate
 If you use `memory` repositories, `scheduler` and `api` do not share state across processes.
 For shared state across services, run both with `REPO_BACKEND=mysql`.
 
+## AI Service Configuration And Startup
+
+Run the following commands from the repository root:
+
+```bash
+cd /root/workspace/go-ai-scheduler
+```
+
+A sample environment file is provided at `.env.ai-service.example`.
+Do not put real credentials into the example file and commit it.
+
+Create a local private env file first:
+
+```bash
+cd /root/workspace/go-ai-scheduler
+cp .env.ai-service.example .env.ai-service
+```
+
+The repository ignores `.env.ai-service`, so you can store your real key there without committing it.
+
+The `ai-service` reads its LLM configuration from these environment variables:
+
+```bash
+export LLM_ENDPOINT='https://api.openai.com/v1'
+export LLM_API_KEY='sk-...'
+export LLM_MODEL='gpt-4o'
+```
+
+Notes:
+
+- `LLM_ENDPOINT` must be the API base URL, not the full `/chat/completions` path
+- `LLM_API_KEY` is sent as a Bearer token
+- `LLM_MODEL` defaults to `gpt-4o` when unset
+
+If you want AI analysis records to persist to MySQL, also configure:
+
+```bash
+export REPO_BACKEND=mysql
+export MYSQL_DSN='root:root@tcp(127.0.0.1:3306)/go_ai_scheduler?parseTime=true'
+export AUTO_MIGRATE=false
+export MIGRATION_DIR=migrations
+export REDIS_ADDR='127.0.0.1:6379'
+```
+
+Use `go run ./cmd/migrate` to apply migrations explicitly before starting services.
+Keeping `AUTO_MIGRATE=false` avoids rerunning non-idempotent migrations on every boot.
+
+Start `ai-service`:
+
+```bash
+cd /root/workspace/go-ai-scheduler
+source .env.ai-service
+go run ./cmd/ai-service
+```
+
+If you want the external `api` service to proxy AI requests to `ai-service`, configure:
+
+```bash
+export AI_SERVICE_URL='http://127.0.0.1:8083'
+```
+
+Then start `api` in a separate terminal:
+
+```bash
+cd /root/workspace/go-ai-scheduler
+source .env.ai-service
+go run ./cmd/api
+```
+
+To start the local MySQL and Redis dependencies for `ai-service`:
+
+```bash
+cd /root/workspace/go-ai-scheduler
+docker compose -f deployments/docker-compose/docker-compose.yml up -d mysql redis
+```
+
+If you also need the scheduler stack later, start etcd too:
+
+```bash
+cd /root/workspace/go-ai-scheduler
+docker compose -f deployments/docker-compose/docker-compose.yml up -d mysql redis etcd
+```
+
+Current AI helper endpoints include:
+
+- `POST /api/v1/cron/parse`
+- `POST /api/v1/log-analysis/analyze`
+- `POST /api/v1/advisor/generate`
+- `POST /api/v1/cron/next`
+
 ## Internal Transport
 
 The external management plane is HTTP only.
