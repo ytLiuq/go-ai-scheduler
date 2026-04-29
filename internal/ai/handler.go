@@ -2,6 +2,7 @@ package ai
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -95,9 +96,10 @@ func parseCronNatural(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAd
 	metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "cron_parse", "result": "ok"})
 	if aiRepo != nil {
 		outputJSON, _ := json.Marshal(resp)
-		_ = aiRepo.CreateRecord(r.Context(), &model.AIAnalysisRecord{
+		inputJSON, _ := json.Marshal(req)
+		persistAIRecord(r, aiRepo, &model.AIAnalysisRecord{
 			AnalysisType: "cron_parse",
-			InputJSON:    req.Input,
+			InputJSON:    string(inputJSON),
 			OutputJSON:   string(outputJSON),
 			Confidence:   resp.Confidence,
 		})
@@ -124,9 +126,10 @@ func analyzeLog(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter,
 	}
 	if aiRepo != nil {
 		outputJSON, _ := json.Marshal(result)
-		_ = aiRepo.CreateRecord(r.Context(), &model.AIAnalysisRecord{
+		inputJSON, _ := json.Marshal(req)
+		persistAIRecord(r, aiRepo, &model.AIAnalysisRecord{
 			AnalysisType: "log_analysis",
-			InputJSON:    req.Log,
+			InputJSON:    string(inputJSON),
 			OutputJSON:   string(outputJSON),
 			Confidence:   result.Confidence,
 		})
@@ -164,7 +167,7 @@ func generateAdvice(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdap
 				maxConf = a.Confidence
 			}
 		}
-		_ = aiRepo.CreateRecord(r.Context(), &model.AIAnalysisRecord{
+		persistAIRecord(r, aiRepo, &model.AIAnalysisRecord{
 			AnalysisType: "schedule_advice",
 			InputJSON:    string(inputJSON),
 			OutputJSON:   string(outputJSON),
@@ -185,4 +188,10 @@ func methodNotAllowed(w http.ResponseWriter, method string) {
 		"error":  "method not allowed",
 		"method": method,
 	})
+}
+
+func persistAIRecord(r *http.Request, aiRepo repo.AIAnalysisRepository, record *model.AIAnalysisRecord) {
+	if err := aiRepo.CreateRecord(r.Context(), record); err != nil {
+		log.Printf("persist ai analysis record failed: type=%s err=%v", record.AnalysisType, err)
+	}
 }
