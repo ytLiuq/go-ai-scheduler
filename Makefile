@@ -4,3 +4,7 @@ proto:
 		--go_out=. --go_opt=module=github.com/example/go-ai-scheduler \
 		--go-grpc_out=. --go-grpc_opt=module=github.com/example/go-ai-scheduler \
 		proto/scheduler.proto
+
+.PHONY: run-console
+run-console:
+	bash ./scripts/run-console.sh
