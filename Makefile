@@ -8,3 +8,7 @@ proto:
 .PHONY: run-console
 run-console:
 	bash ./scripts/run-console.sh
+
+.PHONY: run-full-stack
+run-full-stack:
+	bash ./scripts/run-full-stack.sh

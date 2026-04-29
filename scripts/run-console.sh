@@ -20,6 +20,10 @@ cleanup() {
   if [[ -n "$API_PID" ]] && kill -0 "$API_PID" 2>/dev/null; then
     kill "$API_PID" 2>/dev/null || true
   fi
+  pkill -f '/cmd/ai-service' 2>/dev/null || true
+  pkill -f '/cmd/api' 2>/dev/null || true
+  pkill -x ai-service 2>/dev/null || true
+  pkill -x api 2>/dev/null || true
   wait 2>/dev/null || true
   exit "$code"
 }
