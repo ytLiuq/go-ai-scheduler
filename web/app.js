@@ -1,6 +1,6 @@
 const API = '';
 
-const { createApp, ref, reactive, onMounted } = Vue;
+const { createApp, ref, reactive, onMounted, computed } = Vue;
 
 createApp({
   setup() {
@@ -16,8 +16,29 @@ createApp({
     const workers = ref([]);
     const instances = ref([]);
     const taskModal = ref(null);
-    const editingTask = reactive({ name: '', type: 'shell', cron_expr: '', payload: '', timeout_seconds: 300, max_retry: 3, retry_policy: 'fixed_interval', route_strategy: 'least_loaded' });
-    const aiLoading = reactive({ cron: false, log: false, advisor: false });
+    const editingTask = reactive({
+      id: 0,
+      name: '',
+      type: 'shell',
+      cron_expr: '',
+      payload: '',
+      timeout_seconds: 300,
+      max_retry: 3,
+      retry_policy: 'fixed_interval',
+      route_strategy: 'least_loaded'
+    });
+    const aiLoading = reactive({ cron: false, log: false, advisor: false, status: false });
+    const aiStatus = reactive({
+      status: 'unknown',
+      service: 'ai-service',
+      mode: '',
+      llm_enabled: false,
+      model: '',
+      endpoint: '',
+      api_key_present: false,
+      server_time: '',
+      error: ''
+    });
     const aiCron = reactive({ input: 'every 5 minutes', result: '', resultObj: null });
     const aiLog = reactive({
       log: 'dial tcp 10.0.0.8:443: connection refused',
@@ -39,26 +60,89 @@ createApp({
       resultObj: null
     });
 
-    const headers = () => token.value ? { 'Authorization': 'Bearer ' + token.value, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
+    const headers = () => token.value
+      ? { Authorization: 'Bearer ' + token.value, 'Content-Type': 'application/json' }
+      : { 'Content-Type': 'application/json' };
 
     async function api(path, method = 'GET', body = null) {
       const opts = { method, headers: headers() };
       if (body) opts.body = JSON.stringify(body);
       const resp = await fetch(API + path, opts);
-      if (resp.status === 401) { logout(); throw new Error('unauthorized'); }
-      if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.error || resp.statusText); }
+      if (resp.status === 401) {
+        logout();
+        throw new Error('unauthorized');
+      }
+      if (!resp.ok) {
+        const e = await resp.json().catch(() => ({}));
+        throw new Error(e.error || resp.statusText);
+      }
       return resp.json();
     }
+
+    function safePercent(part, total) {
+      if (!total) return '0%';
+      return Math.round((part / total) * 100) + '%';
+    }
+
+    function ratioLabel(current, max) {
+      if (!max) return '0%';
+      return Math.round((current / max) * 100) + '%';
+    }
+
+    const roleLabel = computed(() => {
+      const labels = { admin: 'Admin', operator: 'Operator', viewer: 'Viewer' };
+      return labels[role.value] || role.value || 'Guest';
+    });
+
+    const failedInstances = computed(() => instances.value.filter(i => i.status === 'failed').length);
+    const runningInstances = computed(() => instances.value.filter(i => !['failed', 'success'].includes(i.status)).length);
+    const successfulInstances = computed(() => instances.value.filter(i => i.status === 'success').length);
+    const offlineWorkers = computed(() => workers.value.filter(w => w.status !== 'online').length);
+
+    const avgWorkerLoadValue = computed(() => {
+      const online = workers.value.filter(w => w.status === 'online');
+      if (!online.length) return 0;
+      const total = online.reduce((sum, worker) => {
+        if (!worker.max_concurrency) return sum;
+        return sum + (worker.current_load || 0) / worker.max_concurrency;
+      }, 0);
+      return total / online.length;
+    });
+
+    const highestWorkerLoadValue = computed(() => workers.value.reduce((max, worker) => {
+      if (!worker.max_concurrency) return max;
+      const value = (worker.current_load || 0) / worker.max_concurrency;
+      return value > max ? value : max;
+    }, 0));
+
+    const avgWorkerLoadLabel = computed(() => Math.round(avgWorkerLoadValue.value * 100) + '%');
+    const highestWorkerLoadLabel = computed(() => Math.round(highestWorkerLoadValue.value * 100) + '%');
+    const taskEnableRate = computed(() => safePercent(stats.enabled, stats.tasks));
+    const workerOnlineRate = computed(() => safePercent(stats.workers, workers.value.length));
+    const instanceFailureRate = computed(() => safePercent(failedInstances.value, instances.value.length));
+
+    const dashboardStats = computed(() => [
+      { label: 'Total Tasks', value: stats.tasks, note: '控制台已加载的任务总数', icon: 'T' },
+      { label: 'Recent Instances', value: stats.instances, note: '最近实例数据样本', icon: 'I' },
+      { label: 'Online Workers', value: stats.workers, note: workers.value.length ? '节点在线状态已汇总' : '尚未发现 Worker', icon: 'W' },
+      { label: 'Failed Runs', value: failedInstances.value, note: '最近实例中的失败次数', icon: '!' }
+    ]);
 
     async function doLogin() {
       loginError.value = '';
       try {
-        const resp = await api('/api/auth/login', 'POST', { username: loginUser.value, password: loginPass.value });
+        const resp = await api('/api/auth/login', 'POST', {
+          username: loginUser.value,
+          password: loginPass.value
+        });
         token.value = resp.token;
         role.value = resp.role;
         localStorage.setItem('scheduler_token', resp.token);
         localStorage.setItem('scheduler_role', resp.role);
-      } catch (e) { loginError.value = e.message; }
+        await Promise.all([loadTasks(), loadWorkers(), loadInstances(), loadAIStatus()]);
+      } catch (e) {
+        loginError.value = e.message;
+      }
     }
 
     function logout() {
@@ -69,48 +153,119 @@ createApp({
     }
 
     async function loadTasks() {
-      try { const data = await api('/api/v1/tasks'); tasks.value = data || []; stats.tasks = tasks.value.length; stats.enabled = tasks.value.filter(t => t.status === 'enabled').length; } catch (e) { console.error(e); }
+      try {
+        const data = await api('/api/v1/tasks');
+        tasks.value = data || [];
+        stats.tasks = tasks.value.length;
+        stats.enabled = tasks.value.filter(t => t.status === 'enabled').length;
+      } catch (e) {
+        console.error(e);
+      }
     }
 
     async function loadWorkers() {
-      try { const data = await api('/api/v1/workers'); workers.value = data || []; stats.workers = workers.value.filter(w => w.status === 'online').length; } catch (e) { console.error(e); }
+      try {
+        const data = await api('/api/v1/workers');
+        workers.value = data || [];
+        stats.workers = workers.value.filter(w => w.status === 'online').length;
+      } catch (e) {
+        console.error(e);
+      }
     }
 
     async function loadInstances() {
-      try { const data = await api('/api/v1/task-instances'); instances.value = (data || []).slice(0, 50); stats.instances = instances.value.length; } catch (e) { console.error(e); }
+      try {
+        const data = await api('/api/v1/task-instances');
+        instances.value = (data || []).slice(0, 50);
+        stats.instances = instances.value.length;
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function loadAIStatus() {
+      aiLoading.status = true;
+      aiStatus.error = '';
+      try {
+        const data = await api('/api/v1/ai/status');
+        Object.assign(aiStatus, data || {}, { error: '' });
+      } catch (e) {
+        Object.assign(aiStatus, {
+          status: 'error',
+          mode: '',
+          llm_enabled: false,
+          model: '',
+          endpoint: '',
+          api_key_present: false,
+          server_time: '',
+          error: e.message
+        });
+      } finally {
+        aiLoading.status = false;
+      }
+    }
+
+    function resetEditingTask() {
+      Object.assign(editingTask, {
+        id: 0,
+        name: '',
+        type: 'shell',
+        cron_expr: '',
+        payload: '',
+        timeout_seconds: 300,
+        max_retry: 3,
+        retry_policy: 'fixed_interval',
+        route_strategy: 'least_loaded'
+      });
     }
 
     function showTaskModal(task) {
       if (task) {
         Object.assign(editingTask, {
-          id: task.id, name: task.name, type: task.type, cron_expr: task.cron_expr || '',
-          payload: task.payload || '', timeout_seconds: task.timeout_seconds || 300,
-          max_retry: task.max_retry || 3, retry_policy: task.retry_policy || 'fixed_interval',
+          id: task.id,
+          name: task.name,
+          type: task.type,
+          cron_expr: task.cron_expr || '',
+          payload: task.payload || '',
+          timeout_seconds: task.timeout_seconds || 300,
+          max_retry: task.max_retry || 3,
+          retry_policy: task.retry_policy || 'fixed_interval',
           route_strategy: task.route_strategy || 'least_loaded'
         });
       } else {
-        Object.assign(editingTask, { id: 0, name: '', type: 'shell', cron_expr: '', payload: '', timeout_seconds: 300, max_retry: 3, retry_policy: 'fixed_interval', route_strategy: 'least_loaded' });
+        resetEditingTask();
       }
       taskModal.value = true;
     }
 
     async function saveTask() {
       try {
-        const body = { name: editingTask.name, type: editingTask.type, cron_expr: editingTask.cron_expr, payload: editingTask.payload, timeout_seconds: editingTask.timeout_seconds, max_retry: editingTask.max_retry, retry_policy: editingTask.retry_policy, route_strategy: editingTask.route_strategy };
+        const body = {
+          name: editingTask.name,
+          type: editingTask.type,
+          cron_expr: editingTask.cron_expr,
+          payload: editingTask.payload,
+          timeout_seconds: editingTask.timeout_seconds,
+          max_retry: editingTask.max_retry,
+          retry_policy: editingTask.retry_policy,
+          route_strategy: editingTask.route_strategy
+        };
         if (editingTask.id) {
           await api('/api/v1/tasks/' + editingTask.id, 'PUT', body);
         } else {
           await api('/api/v1/tasks', 'POST', body);
         }
         taskModal.value = null;
-        loadTasks();
-      } catch (e) { alert(e.message); }
+        await loadTasks();
+      } catch (e) {
+        alert(e.message);
+      }
     }
 
     async function toggleTask(task) {
       const action = task.status === 'enabled' ? 'pause' : 'resume';
       await api('/api/v1/tasks/' + task.id + '/' + action, 'POST');
-      loadTasks();
+      await loadTasks();
     }
 
     async function triggerTask(task) {
@@ -125,6 +280,37 @@ createApp({
     function formatPercent(value) {
       if (typeof value !== 'number' || Number.isNaN(value)) return '--';
       return Math.round(value * 100) + '%';
+    }
+
+    function taskStatusClass(status) {
+      return status === 'enabled' ? 'badge-success' : 'badge-warning';
+    }
+
+    function taskStatusText(status) {
+      return status === 'enabled' ? 'Enabled' : status || '--';
+    }
+
+    function workerStatusClass(status) {
+      return status === 'online' ? 'badge-success' : 'badge-error';
+    }
+
+    function workerStatusText(status) {
+      return status === 'online' ? 'Online' : status || '--';
+    }
+
+    function instanceStatusClass(status) {
+      if (status === 'success') return 'badge-success';
+      if (status === 'failed') return 'badge-error';
+      if (status === 'running') return 'badge-info';
+      return 'badge-neutral';
+    }
+
+    function instanceStatusText(status) {
+      return status || '--';
+    }
+
+    function workerLoadLabel(worker) {
+      return ratioLabel(worker.current_load || 0, worker.max_concurrency || 0);
     }
 
     async function runCronParse() {
@@ -187,17 +373,60 @@ createApp({
 
     onMounted(() => {
       if (token.value) {
-        loadTasks();
-        loadWorkers();
-        loadInstances();
+        Promise.all([loadTasks(), loadWorkers(), loadInstances(), loadAIStatus()]);
       }
     });
 
     return {
-      token, role, loginUser, loginPass, loginError, tab, stats, tasks, workers, instances,
-      taskModal, editingTask, aiLoading, aiCron, aiLog, aiAdvisor,
-      doLogin, logout, loadTasks, loadWorkers, loadInstances, showTaskModal, saveTask,
-      toggleTask, triggerTask, runCronParse, runLogAnalysis, runAdvisor, formatPercent
+      token,
+      role,
+      roleLabel,
+      loginUser,
+      loginPass,
+      loginError,
+      tab,
+      stats,
+      tasks,
+      workers,
+      instances,
+      taskModal,
+      editingTask,
+      aiLoading,
+      aiStatus,
+      aiCron,
+      aiLog,
+      aiAdvisor,
+      failedInstances,
+      runningInstances,
+      successfulInstances,
+      offlineWorkers,
+      avgWorkerLoadLabel,
+      highestWorkerLoadLabel,
+      taskEnableRate,
+      workerOnlineRate,
+      instanceFailureRate,
+      dashboardStats,
+      doLogin,
+      logout,
+      loadTasks,
+      loadWorkers,
+      loadInstances,
+      loadAIStatus,
+      showTaskModal,
+      saveTask,
+      toggleTask,
+      triggerTask,
+      runCronParse,
+      runLogAnalysis,
+      runAdvisor,
+      formatPercent,
+      taskStatusClass,
+      taskStatusText,
+      workerStatusClass,
+      workerStatusText,
+      instanceStatusClass,
+      instanceStatusText,
+      workerLoadLabel
     };
   }
 }).mount('#app');
