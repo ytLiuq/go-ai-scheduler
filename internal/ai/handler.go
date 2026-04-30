@@ -10,10 +10,15 @@ import (
 	aiadvisor "github.com/example/go-ai-scheduler/internal/ai/advisor"
 	aicron "github.com/example/go-ai-scheduler/internal/ai/cron"
 	"github.com/example/go-ai-scheduler/internal/ai/loganalysis"
+	"github.com/example/go-ai-scheduler/internal/ai/taskparser"
 	"github.com/example/go-ai-scheduler/internal/model"
 	"github.com/example/go-ai-scheduler/internal/pkg/metrics"
 	"github.com/example/go-ai-scheduler/internal/repo"
 )
+
+type taskParseRequest struct {
+	Input string `json:"input"`
+}
 
 type cronNextRequest struct {
 	Expression string    `json:"expression"`
@@ -51,6 +56,7 @@ func NewRouter(llm *adapter.LLMAdapter, aiRepo repo.AIAnalysisRepository) http.H
 	mux.HandleFunc("POST /api/v1/cron/parse", func(w http.ResponseWriter, r *http.Request) { parseCronNatural(w, r, llm, aiRepo) })
 	mux.HandleFunc("/api/v1/log-analysis/analyze", func(w http.ResponseWriter, r *http.Request) { analyzeLog(w, r, llm, aiRepo) })
 	mux.HandleFunc("POST /api/v1/advisor/generate", func(w http.ResponseWriter, r *http.Request) { generateAdvice(w, r, llm, aiRepo) })
+	mux.HandleFunc("POST /api/v1/task/create", func(w http.ResponseWriter, r *http.Request) { parseTaskNatural(w, r, llm, aiRepo) })
 	return metrics.Instrument("ai-service", mux)
 }
 
@@ -208,6 +214,40 @@ func methodNotAllowed(w http.ResponseWriter, method string) {
 		"error":  "method not allowed",
 		"method": method,
 	})
+}
+
+func parseTaskNatural(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter, aiRepo repo.AIAnalysisRepository) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, r.Method)
+		return
+	}
+	var req taskParseRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"})
+		return
+	}
+	if req.Input == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "input is required"})
+		return
+	}
+	resp, err := taskparser.ParseNaturalLanguage(r.Context(), llm, req.Input)
+	if err != nil {
+		metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "task_parse", "result": "error"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "task_parse", "result": "ok"})
+	if aiRepo != nil {
+		outputJSON, _ := json.Marshal(resp)
+		inputJSON, _ := json.Marshal(req)
+		persistAIRecord(r, aiRepo, &model.AIAnalysisRecord{
+			AnalysisType: "task_parse",
+			InputJSON:    string(inputJSON),
+			OutputJSON:   string(outputJSON),
+			Confidence:   resp.Confidence,
+		})
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func persistAIRecord(r *http.Request, aiRepo repo.AIAnalysisRepository, record *model.AIAnalysisRecord) {

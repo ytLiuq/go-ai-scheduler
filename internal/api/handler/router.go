@@ -53,6 +53,7 @@ func NewAPIRouter(authHandler *AuthHandler, workerHandler *WorkerHandler, taskHa
 	mux.HandleFunc("POST /api/v1/ai/cron/parse", requireAuth("viewer", proxyAIHandler("cron/parse")))
 	mux.HandleFunc("POST /api/v1/ai/log-analysis/analyze", requireAuth("viewer", proxyAIHandler("log-analysis/analyze")))
 	mux.HandleFunc("POST /api/v1/ai/advisor/generate", requireAuth("viewer", proxyAIHandler("advisor/generate")))
+	mux.HandleFunc("POST /api/v1/ai/task/create", requireAuth("operator", proxyAIHandler("task/create")))
 
 	// Serve web console static files.
 	mux.Handle("/", http.FileServer(http.Dir("web")))
