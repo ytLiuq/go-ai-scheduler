@@ -212,7 +212,7 @@ func (h *Handler) run(req rpc.ExecuteTaskRequest) {
 	if req.TaskType == "shell" && h.sandboxDir != "" {
 		output, execErr = h.executeInSandbox(ctx, req)
 	} else {
-		output, execErr = executor.Execute(ctx, req.TaskType, req.Payload, map[string]string{
+		output, execErr = executor.Execute(ctx, req.TaskType, req.Payload, req.Image, map[string]string{
 			"IDEMPOTENCY_KEY":      req.IdempotencyKey,
 			"SHARD_NO":             fmt.Sprintf("%d", req.ShardNo),
 			"SHARD_TOTAL":          fmt.Sprintf("%d", req.ShardTotal),

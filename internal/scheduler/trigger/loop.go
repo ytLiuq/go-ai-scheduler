@@ -221,6 +221,7 @@ func (l *Loop) handleTask(ctx context.Context, task *model.Task) error {
 			TaskID:             task.ID,
 			TaskType:           task.Type,
 			Payload:            task.Payload,
+			Image:              task.Image,
 			TimeoutSeconds:     task.TimeoutSeconds,
 			RetryCount:         instance.RetryCount,
 			ShardNo:            shard,

@@ -9,6 +9,7 @@ type Task struct {
 	Type            string
 	CronExpr        string
 	Payload         string
+	Image           string
 	Status          string
 	TimeoutSeconds  int
 	MaxRetry             int

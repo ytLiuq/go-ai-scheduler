@@ -34,6 +34,7 @@ func (s *Server) ExecuteTask(ctx context.Context, req *schedulerv1.ExecuteTaskRe
 		TaskID:             req.GetTaskId(),
 		TaskType:           req.GetTaskType(),
 		Payload:            req.GetPayload(),
+		Image:              req.GetImage(),
 		TimeoutSeconds:     int(req.GetTimeoutSeconds()),
 		RetryCount:         int(req.GetRetryCount()),
 		SchedulerURL:       req.GetSchedulerUrl(),

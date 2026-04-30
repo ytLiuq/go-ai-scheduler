@@ -6,6 +6,7 @@ type ExecuteTaskRequest struct {
 	TaskID             int64  `json:"task_id"`
 	TaskType           string `json:"task_type"`
 	Payload            string `json:"payload"`
+	Image              string `json:"image"`
 	TimeoutSeconds     int    `json:"timeout_seconds"`
 	RetryCount         int    `json:"retry_count"`
 	ShardNo            int    `json:"shard_no"`

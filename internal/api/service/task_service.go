@@ -30,6 +30,7 @@ type TaskUpsertRequest struct {
 	Type            string    `json:"type"`
 	CronExpr        string    `json:"cron_expr"`
 	Payload         string    `json:"payload"`
+	Image           string    `json:"image"`
 	Status          string    `json:"status"`
 	TimeoutSeconds  int       `json:"timeout_seconds"`
 	MaxRetry        int       `json:"max_retry"`
@@ -300,6 +301,7 @@ func buildTask(id int64, req TaskUpsertRequest) (*model.Task, error) {
 		Type:            req.Type,
 		CronExpr:        req.CronExpr,
 		Payload:         req.Payload,
+		Image:           req.Image,
 		Status:          req.Status,
 		TimeoutSeconds:  req.TimeoutSeconds,
 		MaxRetry:        req.MaxRetry,

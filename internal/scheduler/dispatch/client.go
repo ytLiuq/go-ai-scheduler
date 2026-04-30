@@ -123,6 +123,7 @@ func (c *Client) dispatchGRPC(ctx context.Context, target string, req rpc.Execut
 		TaskId:             req.TaskID,
 		TaskType:           req.TaskType,
 		Payload:            req.Payload,
+		Image:              req.Image,
 		TimeoutSeconds:     int32(req.TimeoutSeconds),
 		RetryCount:         int32(req.RetryCount),
 		SchedulerUrl:       req.SchedulerURL,

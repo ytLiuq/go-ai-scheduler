@@ -10,8 +10,8 @@ import (
 )
 
 // Execute runs one task based on task type. extraEnv is injected as environment
-// variables for shell/python tasks (idempotency key, shard info, etc.).
-func Execute(ctx context.Context, taskType string, payload string, extraEnv map[string]string) (string, error) {
+// variables for shell tasks (idempotency key, shard info, etc.).
+func Execute(ctx context.Context, taskType string, payload string, image string, extraEnv map[string]string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(taskType)) {
 	case "shell":
 		cmd := exec.CommandContext(ctx, "bash", "-lc", payload)
@@ -24,19 +24,6 @@ func Execute(ctx context.Context, taskType string, payload string, extraEnv map[
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			return string(output), fmt.Errorf("shell execute failed: %w output=%s", err, string(output))
-		}
-		return string(output), nil
-
-	case "python":
-		cmd := exec.CommandContext(ctx, "python3", "-c", payload)
-		if extraEnv != nil {
-			for k, v := range extraEnv {
-				cmd.Env = append(cmd.Env, k+"="+v)
-			}
-		}
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			return string(output), fmt.Errorf("python execute failed: %w output=%s", err, string(output))
 		}
 		return string(output), nil
 
@@ -58,6 +45,22 @@ func Execute(ctx context.Context, taskType string, payload string, extraEnv map[
 			return string(body), fmt.Errorf("http execute status=%s", resp.Status)
 		}
 		return string(body), nil
+
+	case "container":
+		if image == "" {
+			return "", fmt.Errorf("container task requires a non-empty image")
+		}
+		args := []string{"run", "--rm"}
+		if payload != "" {
+			args = append(args, strings.Fields(payload)...)
+		}
+		args = append(args, image)
+		cmd := exec.CommandContext(ctx, "docker", args...)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return string(output), fmt.Errorf("container execute failed: %w output=%s", err, string(output))
+		}
+		return string(output), nil
 
 	default:
 		return "", fmt.Errorf("unsupported task type: %s", taskType)

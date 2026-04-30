@@ -22,15 +22,16 @@ func NewTaskRepository(db *sql.DB) *TaskRepository {
 func (r *TaskRepository) CreateTask(ctx context.Context, task *model.Task) error {
 	const query = `
 		INSERT INTO task (
-			name, type, cron_expr, payload, status, timeout_seconds,
+			name, type, cron_expr, payload, image, status, timeout_seconds,
 			max_retry, retry_policy, retry_on_errors, route_strategy, labels, next_trigger_time, tenant_id, version
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	result, err := r.db.ExecContext(ctx, query,
 		task.Name,
 		task.Type,
 		task.CronExpr,
 		task.Payload,
+		task.Image,
 		task.Status,
 		task.TimeoutSeconds,
 		task.MaxRetry,
@@ -61,7 +62,7 @@ func (r *TaskRepository) CreateTask(ctx context.Context, task *model.Task) error
 func (r *TaskRepository) UpdateTask(ctx context.Context, task *model.Task) error {
 	const query = `
 		UPDATE task
-		SET name = ?, type = ?, cron_expr = ?, payload = ?, status = ?, timeout_seconds = ?,
+		SET name = ?, type = ?, cron_expr = ?, payload = ?, image = ?, status = ?, timeout_seconds = ?,
 		    max_retry = ?, retry_policy = ?, retry_on_errors = ?, route_strategy = ?, labels = ?,
 		    next_trigger_time = ?, tenant_id = ?, version = version + 1
 		WHERE id = ?
@@ -71,6 +72,7 @@ func (r *TaskRepository) UpdateTask(ctx context.Context, task *model.Task) error
 		task.Type,
 		task.CronExpr,
 		task.Payload,
+		task.Image,
 		task.Status,
 		task.TimeoutSeconds,
 		task.MaxRetry,
@@ -105,7 +107,7 @@ func (r *TaskRepository) DeleteTask(ctx context.Context, id int64) error {
 // GetTask loads one task by id.
 func (r *TaskRepository) GetTask(ctx context.Context, id int64) (*model.Task, error) {
 	const query = `
-		SELECT id, name, type, cron_expr, payload, status, timeout_seconds, max_retry,
+		SELECT id, name, type, cron_expr, payload, image, status, timeout_seconds, max_retry,
 		       retry_policy, retry_on_errors, route_strategy, labels, next_trigger_time, tenant_id, version,
 		       created_at, updated_at
 		FROM task
@@ -118,7 +120,7 @@ func (r *TaskRepository) GetTask(ctx context.Context, id int64) (*model.Task, er
 // ListTasks loads all tasks ordered by id.
 func (r *TaskRepository) ListTasks(ctx context.Context) ([]*model.Task, error) {
 	const query = `
-		SELECT id, name, type, cron_expr, payload, status, timeout_seconds, max_retry,
+		SELECT id, name, type, cron_expr, payload, image, status, timeout_seconds, max_retry,
 		       retry_policy, retry_on_errors, route_strategy, labels, next_trigger_time, tenant_id, version,
 		       created_at, updated_at
 		FROM task
@@ -135,7 +137,7 @@ func (r *TaskRepository) ListTasks(ctx context.Context) ([]*model.Task, error) {
 // ListTasksByTenant loads tasks filtered by tenant.
 func (r *TaskRepository) ListTasksByTenant(ctx context.Context, tenantID int64) ([]*model.Task, error) {
 	const query = `
-		SELECT id, name, type, cron_expr, payload, status, timeout_seconds, max_retry,
+		SELECT id, name, type, cron_expr, payload, image, status, timeout_seconds, max_retry,
 		       retry_policy, retry_on_errors, route_strategy, labels, next_trigger_time, tenant_id, version,
 		       created_at, updated_at
 		FROM task
@@ -153,7 +155,7 @@ func (r *TaskRepository) ListTasksByTenant(ctx context.Context, tenantID int64) 
 // ListDueTasks loads enabled tasks that should be triggered.
 func (r *TaskRepository) ListDueTasks(ctx context.Context, limit int) ([]*model.Task, error) {
 	const query = `
-		SELECT id, name, type, cron_expr, payload, status, timeout_seconds, max_retry,
+		SELECT id, name, type, cron_expr, payload, image, status, timeout_seconds, max_retry,
 		       retry_policy, retry_on_errors, route_strategy, labels, next_trigger_time, tenant_id, version,
 		       created_at, updated_at
 		FROM task
@@ -178,6 +180,7 @@ func scanTask(scanner interface{ Scan(dest ...any) error }) (*model.Task, error)
 		&task.Type,
 		&task.CronExpr,
 		&task.Payload,
+		&task.Image,
 		&task.Status,
 		&task.TimeoutSeconds,
 		&task.MaxRetry,
@@ -212,52 +215,52 @@ func scanTasks(rows *sql.Rows) ([]*model.Task, error) {
 		return nil, fmt.Errorf("iterate tasks: %w", err)
 	}
 	return tasks, nil
-	}
+}
 
-	// AddDependency records a dependency edge.
-	func (r *TaskRepository) AddDependency(ctx context.Context, taskID, dependsOnTaskID int64) error {
-		_, err := r.db.ExecContext(ctx, "INSERT INTO task_dependency (task_id, depends_on_task_id) VALUES (?, ?)", taskID, dependsOnTaskID)
-		return err
-	}
+// AddDependency records a dependency edge.
+func (r *TaskRepository) AddDependency(ctx context.Context, taskID, dependsOnTaskID int64) error {
+	_, err := r.db.ExecContext(ctx, "INSERT INTO task_dependency (task_id, depends_on_task_id) VALUES (?, ?)", taskID, dependsOnTaskID)
+	return err
+}
 
-	// RemoveDependency removes a dependency edge.
-	func (r *TaskRepository) RemoveDependency(ctx context.Context, taskID, dependsOnTaskID int64) error {
-		_, err := r.db.ExecContext(ctx, "DELETE FROM task_dependency WHERE task_id = ? AND depends_on_task_id = ?", taskID, dependsOnTaskID)
-		return err
-	}
+// RemoveDependency removes a dependency edge.
+func (r *TaskRepository) RemoveDependency(ctx context.Context, taskID, dependsOnTaskID int64) error {
+	_, err := r.db.ExecContext(ctx, "DELETE FROM task_dependency WHERE task_id = ? AND depends_on_task_id = ?", taskID, dependsOnTaskID)
+	return err
+}
 
-	// ListDownstreamTasks returns task IDs that depend on taskID.
-	func (r *TaskRepository) ListDownstreamTasks(ctx context.Context, taskID int64) ([]int64, error) {
-		rows, err := r.db.QueryContext(ctx, "SELECT task_id FROM task_dependency WHERE depends_on_task_id = ?", taskID)
-		if err != nil {
+// ListDownstreamTasks returns task IDs that depend on taskID.
+func (r *TaskRepository) ListDownstreamTasks(ctx context.Context, taskID int64) ([]int64, error) {
+	rows, err := r.db.QueryContext(ctx, "SELECT task_id FROM task_dependency WHERE depends_on_task_id = ?", taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
-		defer rows.Close()
-		var ids []int64
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				return nil, err
-			}
-			ids = append(ids, id)
-		}
-		return ids, rows.Err()
+		ids = append(ids, id)
 	}
+	return ids, rows.Err()
+}
 
-	// ListUpstreamDeps returns task IDs that taskID depends on.
-	func (r *TaskRepository) ListUpstreamDeps(ctx context.Context, taskID int64) ([]int64, error) {
-		rows, err := r.db.QueryContext(ctx, "SELECT depends_on_task_id FROM task_dependency WHERE task_id = ?", taskID)
-		if err != nil {
+// ListUpstreamDeps returns task IDs that taskID depends on.
+func (r *TaskRepository) ListUpstreamDeps(ctx context.Context, taskID int64) ([]int64, error) {
+	rows, err := r.db.QueryContext(ctx, "SELECT depends_on_task_id FROM task_dependency WHERE task_id = ?", taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
-		defer rows.Close()
-		var ids []int64
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				return nil, err
-			}
-			ids = append(ids, id)
-		}
-		return ids, rows.Err()
+		ids = append(ids, id)
 	}
+	return ids, rows.Err()
+}

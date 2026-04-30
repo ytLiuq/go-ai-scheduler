@@ -101,6 +101,7 @@ func main() {
 			TaskID:             task.ID,
 			TaskType:           task.Type,
 			Payload:            task.Payload,
+			Image:              task.Image,
 			TimeoutSeconds:     task.TimeoutSeconds,
 			RetryCount:         instance.RetryCount,
 			IdempotencyKey:     task.IdempotencyKey,
