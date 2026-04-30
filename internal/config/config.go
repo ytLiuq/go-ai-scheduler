@@ -24,7 +24,7 @@ type Config struct {
 	InternalProtocol  string
 }
 
-// Default returns a minimal bootstrap config for local development.
+// Default returns bootstrap config for local development with MySQL-backed repositories.
 func Default(serviceName string) Config {
 	cfg := Config{
 		ServiceName:  serviceName,
@@ -35,7 +35,7 @@ func Default(serviceName string) Config {
 		MySQLDSN:     "root:root@tcp(127.0.0.1:3306)/go_ai_scheduler?parseTime=true",
 		RedisAddr:    "127.0.0.1:6379",
 		EtcdAddrs:    []string{"127.0.0.1:2379"},
-		RepoBackend:  "memory",
+		RepoBackend:  "mysql",
 		MigrationDir: "migrations",
 		MaxPending:    1000,
 		AutoMigrate:   false,

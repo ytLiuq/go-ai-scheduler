@@ -1,4 +1,4 @@
-package memory
+package teststore
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 
 var errTaskNotFound = errors.New("task not found")
 
-// TaskRepository is an in-memory task store for local development.
+// TaskRepository is a test-only task store.
 type TaskRepository struct {
 	mu           sync.RWMutex
 	nextID       int64

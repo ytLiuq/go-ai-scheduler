@@ -7,11 +7,11 @@ import (
 
 	apiservice "github.com/example/go-ai-scheduler/internal/api/service"
 	"github.com/example/go-ai-scheduler/internal/pkg/logger"
-	"github.com/example/go-ai-scheduler/internal/repo/memory"
+	"github.com/example/go-ai-scheduler/internal/repo/teststore"
 )
 
 func TestCheckerEvictsStaleWorker(t *testing.T) {
-	repo := memory.NewWorkerRepository()
+	repo := teststore.NewWorkerRepository()
 	svc := apiservice.NewWorkerService(repo)
 
 	// Register an online worker with an old heartbeat.
@@ -71,7 +71,7 @@ func TestCheckerEvictsStaleWorker(t *testing.T) {
 }
 
 func TestCheckerStartStop(t *testing.T) {
-	repo := memory.NewWorkerRepository()
+	repo := teststore.NewWorkerRepository()
 	svc := apiservice.NewWorkerService(repo)
 	logr := logger.New("health-loop-test")
 

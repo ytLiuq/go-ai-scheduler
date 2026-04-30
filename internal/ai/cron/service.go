@@ -75,26 +75,29 @@ func parseWithLLM(ctx context.Context, llm *adapter.LLMAdapter, input string) (*
 
 // parseHeuristic handles common patterns without LLM.
 func parseHeuristic(input string) (*ParseNaturalResponse, error) {
-	heuristics := map[string]string{
-		"every hour":        "0 * * * *",
-		"every minute":      "* * * * *",
-		"every day":         "0 0 * * *",
-		"every monday":      "0 0 * * 1",
-		"every weekday":     "0 0 * * 1-5",
-		"every weekend":     "0 0 * * 6,0",
-		"every 5 minutes":   "*/5 * * * *",
-		"every 15 minutes":  "*/15 * * * *",
-		"every 30 minutes":  "*/30 * * * *",
-		"every monday 9am":  "0 9 * * 1",
-		"every day at noon": "0 12 * * *",
-		"every day at midnight": "0 0 * * *",
+	heuristics := []struct {
+		pattern string
+		expr    string
+	}{
+		{"every monday 9am", "0 9 * * 1"},
+		{"every day at midnight", "0 0 * * *"},
+		{"every day at noon", "0 12 * * *"},
+		{"every 30 minutes", "*/30 * * * *"},
+		{"every 15 minutes", "*/15 * * * *"},
+		{"every 5 minutes", "*/5 * * * *"},
+		{"every weekday", "0 0 * * 1-5"},
+		{"every weekend", "0 0 * * 6,0"},
+		{"every monday", "0 0 * * 1"},
+		{"every minute", "* * * * *"},
+		{"every hour", "0 * * * *"},
+		{"every day", "0 0 * * *"},
 	}
 
-	for pattern, expr := range heuristics {
-		if contains(input, pattern) {
+	for _, heuristic := range heuristics {
+		if contains(input, heuristic.pattern) {
 			return &ParseNaturalResponse{
-				CronExpression: expr,
-				Explanation:    fmt.Sprintf("matched heuristic pattern: %s -> %s", pattern, expr),
+				CronExpression: heuristic.expr,
+				Explanation:    fmt.Sprintf("matched heuristic pattern: %s -> %s", heuristic.pattern, heuristic.expr),
 				Confidence:     0.8,
 			}, nil
 		}

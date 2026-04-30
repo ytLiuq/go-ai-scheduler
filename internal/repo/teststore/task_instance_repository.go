@@ -1,4 +1,4 @@
-package memory
+package teststore
 
 import (
 	"context"
@@ -12,19 +12,19 @@ import (
 
 var errTaskInstanceNotFound = errors.New("task instance not found")
 
-// TaskInstanceRepository stores task instances in memory for local bootstrapping.
+// TaskInstanceRepository stores task instances for tests.
 type TaskInstanceRepository struct {
-	mu        sync.RWMutex
-	nextID    int64
-	instances map[int64]*model.TaskInstance
+	mu         sync.RWMutex
+	nextID     int64
+	instances  map[int64]*model.TaskInstance
 	bySchedule map[string]int64
 }
 
 // NewTaskInstanceRepository creates an empty task instance repository.
 func NewTaskInstanceRepository() *TaskInstanceRepository {
 	return &TaskInstanceRepository{
-		nextID:    1,
-		instances: make(map[int64]*model.TaskInstance),
+		nextID:     1,
+		instances:  make(map[int64]*model.TaskInstance),
 		bySchedule: make(map[string]int64),
 	}
 }

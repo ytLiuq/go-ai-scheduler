@@ -1,4 +1,4 @@
-package memory
+package teststore
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"github.com/example/go-ai-scheduler/internal/model"
 )
 
-// AIAnalysisRepository stores AI analysis records in memory.
+// AIAnalysisRepository stores AI analysis records for tests.
 type AIAnalysisRepository struct {
 	mu      sync.Mutex
 	nextID  int64

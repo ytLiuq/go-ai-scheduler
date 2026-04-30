@@ -13,7 +13,7 @@ import (
 	apiservice "github.com/example/go-ai-scheduler/internal/api/service"
 	"github.com/example/go-ai-scheduler/internal/model"
 	"github.com/example/go-ai-scheduler/internal/pkg/logger"
-	"github.com/example/go-ai-scheduler/internal/repo/memory"
+	"github.com/example/go-ai-scheduler/internal/repo/teststore"
 	schedulerdispatch "github.com/example/go-ai-scheduler/internal/scheduler/dispatch"
 	schedulergrpc "github.com/example/go-ai-scheduler/internal/scheduler/grpcserver"
 	"github.com/example/go-ai-scheduler/internal/scheduler/route"
@@ -28,9 +28,9 @@ import (
 func TestHTTPInternalProtocolEndToEnd(t *testing.T) {
 	t.Parallel()
 
-	taskRepo := memory.NewTaskRepository()
-	instanceRepo := memory.NewTaskInstanceRepository()
-	workerRepo := memory.NewWorkerRepository()
+	taskRepo := teststore.NewTaskRepository()
+	instanceRepo := teststore.NewTaskInstanceRepository()
+	workerRepo := teststore.NewWorkerRepository()
 	logr := logger.New("test-http")
 
 	router := route.NewRouter(workerRepo)
@@ -101,9 +101,9 @@ func TestHTTPInternalProtocolEndToEnd(t *testing.T) {
 func TestGRPCInternalProtocolEndToEnd(t *testing.T) {
 	t.Parallel()
 
-	taskRepo := memory.NewTaskRepository()
-	instanceRepo := memory.NewTaskInstanceRepository()
-	workerRepo := memory.NewWorkerRepository()
+	taskRepo := teststore.NewTaskRepository()
+	instanceRepo := teststore.NewTaskInstanceRepository()
+	workerRepo := teststore.NewWorkerRepository()
 	logr := logger.New("test-grpc")
 
 	router := route.NewRouter(workerRepo)
@@ -183,9 +183,9 @@ func TestGRPCInternalProtocolEndToEnd(t *testing.T) {
 func TestHTTPInternalProtocolRetryThenSuccess(t *testing.T) {
 	t.Parallel()
 
-	taskRepo := memory.NewTaskRepository()
-	instanceRepo := memory.NewTaskInstanceRepository()
-	workerRepo := memory.NewWorkerRepository()
+	taskRepo := teststore.NewTaskRepository()
+	instanceRepo := teststore.NewTaskInstanceRepository()
+	workerRepo := teststore.NewWorkerRepository()
 	logr := logger.New("test-http-retry")
 
 	router := route.NewRouter(workerRepo)
@@ -262,9 +262,9 @@ func TestHTTPInternalProtocolRetryThenSuccess(t *testing.T) {
 func TestGRPCInternalProtocolRetryThenSuccess(t *testing.T) {
 	t.Parallel()
 
-	taskRepo := memory.NewTaskRepository()
-	instanceRepo := memory.NewTaskInstanceRepository()
-	workerRepo := memory.NewWorkerRepository()
+	taskRepo := teststore.NewTaskRepository()
+	instanceRepo := teststore.NewTaskInstanceRepository()
+	workerRepo := teststore.NewWorkerRepository()
 	logr := logger.New("test-grpc-retry")
 
 	router := route.NewRouter(workerRepo)
@@ -349,9 +349,9 @@ func TestGRPCInternalProtocolRetryThenSuccess(t *testing.T) {
 func TestHTTPInternalProtocolTimeoutRetryThenSuccess(t *testing.T) {
 	t.Parallel()
 
-	taskRepo := memory.NewTaskRepository()
-	instanceRepo := memory.NewTaskInstanceRepository()
-	workerRepo := memory.NewWorkerRepository()
+	taskRepo := teststore.NewTaskRepository()
+	instanceRepo := teststore.NewTaskInstanceRepository()
+	workerRepo := teststore.NewWorkerRepository()
 	logr := logger.New("test-http-timeout-retry")
 
 	router := route.NewRouter(workerRepo)
@@ -424,7 +424,7 @@ func TestHTTPInternalProtocolTimeoutRetryThenSuccess(t *testing.T) {
 	waitForRetryStatusSuccess(t, instanceRepo, "timeout")
 }
 
-func waitForStatus(t *testing.T, instanceRepo *memory.TaskInstanceRepository, expected string) {
+func waitForStatus(t *testing.T, instanceRepo *teststore.TaskInstanceRepository, expected string) {
 	t.Helper()
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -445,12 +445,12 @@ func waitForStatus(t *testing.T, instanceRepo *memory.TaskInstanceRepository, ex
 	t.Fatalf("did not observe instance status=%s, instances=%+v", expected, instances)
 }
 
-func waitForRetrySuccess(t *testing.T, instanceRepo *memory.TaskInstanceRepository) {
+func waitForRetrySuccess(t *testing.T, instanceRepo *teststore.TaskInstanceRepository) {
 	t.Helper()
 	waitForRetryStatusSuccess(t, instanceRepo, "failed")
 }
 
-func waitForRetryStatusSuccess(t *testing.T, instanceRepo *memory.TaskInstanceRepository, initialStatus string) {
+func waitForRetryStatusSuccess(t *testing.T, instanceRepo *teststore.TaskInstanceRepository, initialStatus string) {
 	t.Helper()
 
 	deadline := time.Now().Add(5 * time.Second)

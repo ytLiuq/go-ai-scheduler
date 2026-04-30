@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/go-ai-scheduler/internal/repo/memory"
+	"github.com/example/go-ai-scheduler/internal/repo/teststore"
 )
 
 func TestTaskServiceCreateTaskComputesNextTriggerFromCron(t *testing.T) {
-	svc := NewTaskService(memory.NewTaskRepository(), nil)
+	svc := NewTaskService(teststore.NewTaskRepository(), nil)
 
 	task, err := svc.CreateTask(context.Background(), TaskUpsertRequest{
 		Name:     "cron-task",
@@ -26,7 +26,7 @@ func TestTaskServiceCreateTaskComputesNextTriggerFromCron(t *testing.T) {
 }
 
 func TestTaskServiceDeleteTaskRemovesTask(t *testing.T) {
-	svc := NewTaskService(memory.NewTaskRepository(), nil)
+	svc := NewTaskService(teststore.NewTaskRepository(), nil)
 
 	task, err := svc.CreateTask(context.Background(), TaskUpsertRequest{
 		Name:    "delete-task",
@@ -47,7 +47,7 @@ func TestTaskServiceDeleteTaskRemovesTask(t *testing.T) {
 }
 
 func TestTaskServicePauseResumeTask(t *testing.T) {
-	svc := NewTaskService(memory.NewTaskRepository(), nil)
+	svc := NewTaskService(teststore.NewTaskRepository(), nil)
 
 	task, err := svc.CreateTask(context.Background(), TaskUpsertRequest{
 		Name:    "pause-task",
@@ -76,7 +76,7 @@ func TestTaskServicePauseResumeTask(t *testing.T) {
 }
 
 func TestTaskServiceResumeRecalculatesNextTrigger(t *testing.T) {
-	svc := NewTaskService(memory.NewTaskRepository(), nil)
+	svc := NewTaskService(teststore.NewTaskRepository(), nil)
 
 	task, err := svc.CreateTask(context.Background(), TaskUpsertRequest{
 		Name:    "cron-resume-task",
@@ -107,7 +107,7 @@ func TestTaskServiceResumeRecalculatesNextTrigger(t *testing.T) {
 }
 
 func TestTaskServiceTriggerTask(t *testing.T) {
-	svc := NewTaskService(memory.NewTaskRepository(), nil)
+	svc := NewTaskService(teststore.NewTaskRepository(), nil)
 
 	task, err := svc.CreateTask(context.Background(), TaskUpsertRequest{
 		Name:    "trigger-task",
@@ -128,7 +128,7 @@ func TestTaskServiceTriggerTask(t *testing.T) {
 }
 
 func TestTaskServiceTriggerDisabledTaskFails(t *testing.T) {
-	svc := NewTaskService(memory.NewTaskRepository(), nil)
+	svc := NewTaskService(teststore.NewTaskRepository(), nil)
 
 	task, err := svc.CreateTask(context.Background(), TaskUpsertRequest{
 		Name:    "disabled-trigger-task",

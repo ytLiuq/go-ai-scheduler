@@ -9,11 +9,11 @@ import (
 	"testing"
 
 	apiservice "github.com/example/go-ai-scheduler/internal/api/service"
-	"github.com/example/go-ai-scheduler/internal/repo/memory"
+	"github.com/example/go-ai-scheduler/internal/repo/teststore"
 )
 
 func setupTaskHandler() (*TaskHandler, *http.ServeMux) {
-	repo := memory.NewTaskRepository()
+	repo := teststore.NewTaskRepository()
 	svc := apiservice.NewTaskService(repo, nil)
 	handler := NewTaskHandler(svc)
 

@@ -10,7 +10,6 @@ import (
 	"github.com/example/go-ai-scheduler/internal/pkg/xmysql"
 	"github.com/example/go-ai-scheduler/internal/pkg/xredis"
 	"github.com/example/go-ai-scheduler/internal/repo"
-	"github.com/example/go-ai-scheduler/internal/repo/memory"
 )
 
 // Resources groups shared startup resources for one process.
@@ -30,38 +29,28 @@ func BuildResources(cfg config.Config, l *log.Logger) (*Resources, func()) {
 		}
 	}
 
-	if repo.IsMySQLBackend(cfg.RepoBackend) {
-		db, err := xmysql.Open(cfg.MySQLDSN)
-		if err != nil {
-			log.Fatalf("init mysql repositories: %v", err)
-		}
-		if cfg.AutoMigrate {
-			if err := xmysql.RunMigrations(db, cfg.MigrationDir); err != nil {
-				log.Fatalf("run migrations: %v", err)
-			}
-			l.Printf("migrations applied from %s", cfg.MigrationDir)
-		}
-		bundle := repo.NewMySQLBundle(db)
-		if err := repo.ValidateBundle(bundle); err != nil {
-			log.Fatalf("invalid mysql repository bundle: %v", err)
-		}
-		res.Repositories = bundle
-		res.DB = db
-		cleaners = append(cleaners, func() { _ = db.Close() })
-		l.Printf("repository backend=mysql")
-	} else {
-		bundle := &repo.Bundle{
-			Task:         memory.NewTaskRepository(),
-			TaskInstance: memory.NewTaskInstanceRepository(),
-			Worker:       memory.NewWorkerRepository(),
-		AIAnalysis:   memory.NewAIAnalysisRepository(),
-		}
-		if err := repo.ValidateBundle(bundle); err != nil {
-			log.Fatalf("invalid memory repository bundle: %v", err)
-		}
-		res.Repositories = bundle
-		l.Printf("repository backend=memory")
+	if !repo.IsMySQLBackend(cfg.RepoBackend) {
+		log.Fatalf("repository backend %q is not supported; set REPO_BACKEND=mysql", cfg.RepoBackend)
 	}
+
+	db, err := xmysql.Open(cfg.MySQLDSN)
+	if err != nil {
+		log.Fatalf("init mysql repositories: %v", err)
+	}
+	if cfg.AutoMigrate {
+		if err := xmysql.RunMigrations(db, cfg.MigrationDir); err != nil {
+			log.Fatalf("run migrations: %v", err)
+		}
+		l.Printf("migrations applied from %s", cfg.MigrationDir)
+	}
+	bundle := repo.NewMySQLBundle(db)
+	if err := repo.ValidateBundle(bundle); err != nil {
+		log.Fatalf("invalid mysql repository bundle: %v", err)
+	}
+	res.Repositories = bundle
+	res.DB = db
+	cleaners = append(cleaners, func() { _ = db.Close() })
+	l.Printf("repository backend=mysql")
 
 	// Redis is optional — only connect if an address is configured.
 	if cfg.RedisAddr != "" {

@@ -1,4 +1,4 @@
-package memory
+package teststore
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 
 var errWorkerNotFound = errors.New("worker not found")
 
-// WorkerRepository is an in-memory implementation used for local bootstrapping.
+// WorkerRepository is a test-only worker repository.
 type WorkerRepository struct {
 	mu      sync.RWMutex
 	workers map[string]*model.WorkerNode
@@ -107,4 +107,3 @@ func (r *WorkerRepository) ListAvailableWorkers(ctx context.Context) ([]*model.W
 	}
 	return result, nil
 }
-
