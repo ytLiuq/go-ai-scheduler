@@ -9,6 +9,16 @@ if [[ -f ".env.ai-service" ]]; then
   source ".env.ai-service"
 fi
 
+if [[ "${REPO_BACKEND:-}" != "mysql" ]]; then
+  echo "run-console requires REPO_BACKEND=mysql" >&2
+  exit 1
+fi
+
+if [[ -z "${MYSQL_DSN:-}" ]]; then
+  echo "run-console requires MYSQL_DSN" >&2
+  exit 1
+fi
+
 AI_PID=""
 API_PID=""
 

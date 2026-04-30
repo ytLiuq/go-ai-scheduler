@@ -51,9 +51,9 @@ The current local bootstrap implementation supports:
 
 - worker registration and heartbeat over HTTP
 - task CRUD over HTTP, including deletion
-- in-memory repositories for workers, tasks, and task instances
+- MySQL-backed repositories for workers, tasks, and task instances
 - cron-based scheduling for `cron_expr` tasks via `next_trigger_time`
-- scheduler leader gating: local single-node mode by default, MySQL `GET_LOCK` when using the MySQL repository backend
+- scheduler leader gating: local single-node mode by default, with MySQL `GET_LOCK`
 - a scheduler trigger loop that scans `next_trigger_time`, creates task instances, and assigns them to the least-loaded available worker
 - worker execution for `shell` and `http` task types
 - failure and timeout callback with centralized retry handling
@@ -62,12 +62,9 @@ The current local bootstrap implementation supports:
 
 ## Repository Backend
 
-The scheduler supports two repository backends:
+The scheduler requires the MySQL repository backend for local startup and shared state.
 
-- `memory` (default): useful for local feature development
-- `mysql`: persistent state for `task`, `task_instance`, and `worker_node`
-
-Use the following environment variables to enable MySQL repositories:
+Use the following environment variables:
 
 ```bash
 export REPO_BACKEND=mysql
@@ -93,8 +90,7 @@ REPO_BACKEND=mysql go run ./cmd/migrate
 - `api`: external management and query plane, including task CRUD, worker query, and task instance query
 - `ai-service`: auxiliary HTTP service exposing `/api/v1/cron/next` and `/api/v1/log-analysis/analyze`
 
-If you use `memory` repositories, `scheduler` and `api` do not share state across processes.
-For shared state across services, run both with `REPO_BACKEND=mysql`.
+All services are expected to run with `REPO_BACKEND=mysql`. Startup scripts fail fast if MySQL is not configured.
 
 ## AI Service Configuration And Startup
 
@@ -147,7 +143,6 @@ You can start both the web console API and `ai-service` with one command:
 
 ```bash
 cd /root/workspace/go-ai-scheduler
-source .env.ai-service
 make run-console
 ```
 
@@ -180,19 +175,23 @@ source .env.ai-service
 go run ./cmd/api
 ```
 
-To start the local MySQL and Redis dependencies for `ai-service`:
+To start the full local stack, including MySQL, Redis, scheduler, worker, api, and ai-service:
 
 ```bash
 cd /root/workspace/go-ai-scheduler
-docker compose -f deployments/docker-compose/docker-compose.yml up -d mysql redis
+make run-full-stack
 ```
 
-If you also need the scheduler stack later, start etcd too:
+`make run-full-stack` now does the following for you:
 
-```bash
-cd /root/workspace/go-ai-scheduler
-docker compose -f deployments/docker-compose/docker-compose.yml up -d mysql redis etcd
-```
+- starts `mysql` and `redis` with Docker Compose
+- loads `.env.ai-service`
+- defaults `REPO_BACKEND` to `mysql`
+- defaults `MYSQL_DSN` to `root:root@tcp(127.0.0.1:3306)/go_ai_scheduler?parseTime=true`
+- defaults `AUTO_MIGRATE` to `true`
+- starts `scheduler`, `worker`, `api`, and `ai-service`
+
+The only required manual setup is creating `.env.ai-service` from `.env.ai-service.example` and filling in your real LLM credentials.
 
 Current AI helper endpoints include:
 
