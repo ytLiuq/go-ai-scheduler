@@ -1244,7 +1244,7 @@ tbody tr:hover{
                   <tr>
                     <th>实例</th>
                     <th>任务</th>
-                    <th>调度批次</th>
+                    <th>触发时间</th>
                     <th>状态</th>
                     <th>Worker</th>
                     <th>重试</th>
@@ -1260,7 +1260,7 @@ tbody tr:hover{
                       </div>
                     </td>
                     <td>{{i.task_id}}</td>
-                    <td><span class="row-sub">{{i.schedule_instance_id}}</span></td>
+                    <td><span class="row-sub">{{formatTime(i.trigger_time)}}</span></td>
                     <td><span :class="'badge '+instanceStatusClass(i.status)">{{instanceStatusText(i.status)}}</span></td>
                     <td>{{i.worker_id || '--'}}</td>
                     <td>{{i.retry_count}}</td>
@@ -1303,12 +1303,8 @@ tbody tr:hover{
                 <div class="v">{{aiStatus.service || 'ai-service'}}</div>
               </div>
               <div class="ai-status-card">
-                <div class="k">Mode</div>
-                <div class="v">{{aiStatus.mode || '--'}}</div>
-              </div>
-              <div class="ai-status-card">
                 <div class="k">Model</div>
-                <div class="v">{{aiStatus.model || 'heuristics-only'}}</div>
+                <div class="v">{{aiStatus.model || '--'}}</div>
               </div>
               <div class="ai-status-card">
                 <div class="k">API Key</div>
@@ -1522,7 +1518,7 @@ tbody tr:hover{
               <select class="select" v-model="editingTask.type">
                 <option>shell</option>
                 <option>http</option>
-                <option>python</option>
+                <option>container</option>
               </select>
             </div>
             <div class="form-group form-span-2">
@@ -1533,6 +1529,11 @@ tbody tr:hover{
             <div class="form-group form-span-2">
               <label>Payload</label>
               <textarea class="textarea" v-model="editingTask.payload" placeholder='{"url":"https://example.com"}'></textarea>
+            </div>
+            <div class="form-group form-span-2" v-if="editingTask.type === 'container'">
+              <label>Container Image</label>
+              <input class="input" v-model="editingTask.image" placeholder="myregistry.io/myapp:latest">
+              <div class="form-help">Docker image reference for container tasks.</div>
             </div>
           </div>
         </div>

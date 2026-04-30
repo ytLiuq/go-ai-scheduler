@@ -22,6 +22,7 @@ createApp({
       type: 'shell',
       cron_expr: '',
       payload: '',
+      image: '',
       timeout_seconds: 300,
       max_retry: 3,
       retry_policy: 'fixed_interval',
@@ -31,7 +32,6 @@ createApp({
     const aiStatus = reactive({
       status: 'unknown',
       service: 'ai-service',
-      mode: '',
       llm_enabled: false,
       model: '',
       endpoint: '',
@@ -95,6 +95,7 @@ createApp({
         type: pick(task, 'type', 'Type'),
         cron_expr: pick(task, 'cron_expr', 'CronExpr'),
         payload: pick(task, 'payload', 'Payload'),
+        image: pick(task, 'image', 'Image'),
         status: pick(task, 'status', 'Status'),
         timeout_seconds: pick(task, 'timeout_seconds', 'TimeoutSeconds'),
         max_retry: pick(task, 'max_retry', 'MaxRetry'),
@@ -131,7 +132,8 @@ createApp({
         status: pick(instance, 'status', 'Status'),
         retry_count: pick(instance, 'retry_count', 'RetryCount'),
         error_code: pick(instance, 'error_code', 'ErrorCode'),
-        error_message: pick(instance, 'error_message', 'ErrorMessage')
+        error_message: pick(instance, 'error_message', 'ErrorMessage'),
+        trigger_time: pick(instance, 'trigger_time', 'TriggerTime')
       };
     }
 
@@ -268,6 +270,7 @@ createApp({
         type: 'shell',
         cron_expr: '',
         payload: '',
+        image: '',
         timeout_seconds: 300,
         max_retry: 3,
         retry_policy: 'fixed_interval',
@@ -283,6 +286,7 @@ createApp({
           type: task.type,
           cron_expr: task.cron_expr || '',
           payload: task.payload || '',
+          image: task.image || '',
           timeout_seconds: task.timeout_seconds || 300,
           max_retry: task.max_retry || 3,
           retry_policy: task.retry_policy || 'fixed_interval',
@@ -301,6 +305,7 @@ createApp({
           type: editingTask.type,
           cron_expr: editingTask.cron_expr,
           payload: editingTask.payload,
+          image: editingTask.image,
           timeout_seconds: editingTask.timeout_seconds,
           max_retry: editingTask.max_retry,
           retry_policy: editingTask.retry_policy,
@@ -337,6 +342,13 @@ createApp({
 
     function formatResult(data) {
       return JSON.stringify(data, null, 2);
+    }
+
+    function formatTime(value) {
+      if (!value) return '--';
+      const d = new Date(value);
+      if (isNaN(d.getTime())) return value;
+      return d.toLocaleString('zh-CN', { hour12: false });
     }
 
     function formatPercent(value) {
@@ -482,6 +494,7 @@ createApp({
       runCronParse,
       runLogAnalysis,
       runAdvisor,
+      formatTime,
       formatPercent,
       taskStatusClass,
       taskStatusText,
