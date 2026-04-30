@@ -11,7 +11,7 @@ import (
 
 // Execute runs one task based on task type. extraEnv is injected as environment
 // variables for shell/python tasks (idempotency key, shard info, etc.).
-func Execute(ctx context.Context, taskType string, payload string, extraEnv map[string]string) error {
+func Execute(ctx context.Context, taskType string, payload string, extraEnv map[string]string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(taskType)) {
 	case "shell":
 		cmd := exec.CommandContext(ctx, "bash", "-lc", payload)
@@ -23,9 +23,9 @@ func Execute(ctx context.Context, taskType string, payload string, extraEnv map[
 		)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("shell execute failed: %w output=%s", err, string(output))
+			return string(output), fmt.Errorf("shell execute failed: %w output=%s", err, string(output))
 		}
-		return nil
+		return string(output), nil
 
 	case "python":
 		cmd := exec.CommandContext(ctx, "python3", "-c", payload)
@@ -36,31 +36,31 @@ func Execute(ctx context.Context, taskType string, payload string, extraEnv map[
 		}
 		output, err := cmd.CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("python execute failed: %w output=%s", err, string(output))
+			return string(output), fmt.Errorf("python execute failed: %w output=%s", err, string(output))
 		}
-		return nil
+		return string(output), nil
 
 	case "http":
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, payload, nil)
 		if err != nil {
-			return fmt.Errorf("build http request: %w", err)
+			return "", fmt.Errorf("build http request: %w", err)
 		}
 		if key := extraEnv["IDEMPOTENCY_KEY"]; key != "" {
 			req.Header.Set("X-Idempotency-Key", key)
 		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			return fmt.Errorf("http execute failed: %w", err)
+			return "", fmt.Errorf("http execute failed: %w", err)
 		}
 		defer resp.Body.Close()
-		_, _ = io.Copy(io.Discard, resp.Body)
+		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode >= 300 {
-			return fmt.Errorf("http execute status=%s", resp.Status)
+			return string(body), fmt.Errorf("http execute status=%s", resp.Status)
 		}
-		return nil
+		return string(body), nil
 
 	default:
-		return fmt.Errorf("unsupported task type: %s", taskType)
+		return "", fmt.Errorf("unsupported task type: %s", taskType)
 	}
 }
 

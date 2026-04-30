@@ -28,7 +28,10 @@ func main() {
 		log.Fatalf("read hostname: %v", err)
 	}
 
-	workerID := fmt.Sprintf("%s-%d", hostname, time.Now().UnixNano())
+	workerID := os.Getenv("WORKER_ID")
+	if workerID == "" {
+		workerID = fmt.Sprintf("%s%s", hostname, cfg.HTTPAddr)
+	}
 	client := heartbeat.NewClient(cfg.SchedulerURL, cfg.SchedulerGRPCAddr, cfg.InternalProtocol)
 	reportClient := reporter.NewClient(cfg.InternalProtocol, cfg.SchedulerGRPCAddr)
 	workerHandler := workerapp.NewHandler(workerID, reportClient, l, workerapp.HandlerConfig{

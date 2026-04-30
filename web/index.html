@@ -1166,6 +1166,7 @@ tbody tr:hover{
                         <button class="btn btn-sm btn-secondary" @click="showTaskModal(t)">编辑</button>
                         <button class="btn btn-sm" :class="t.status==='enabled' ? 'btn-danger' : 'btn-primary'" @click="toggleTask(t)">{{t.status==='enabled' ? '暂停' : '恢复'}}</button>
                         <button class="btn btn-sm btn-primary" @click="triggerTask(t)">触发</button>
+                        <button class="btn btn-sm btn-danger" @click="deleteTask(t)">删除</button>
                       </div>
                     </td>
                   </tr>
@@ -1247,6 +1248,7 @@ tbody tr:hover{
                     <th>状态</th>
                     <th>Worker</th>
                     <th>重试</th>
+                    <th>结果 / 消息</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1262,6 +1264,7 @@ tbody tr:hover{
                     <td><span :class="'badge '+instanceStatusClass(i.status)">{{instanceStatusText(i.status)}}</span></td>
                     <td>{{i.worker_id || '--'}}</td>
                     <td>{{i.retry_count}}</td>
+                    <td><span class="row-sub">{{i.error_message || '--'}}</span></td>
                   </tr>
                 </tbody>
               </table>

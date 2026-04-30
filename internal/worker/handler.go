@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -206,17 +207,19 @@ func (h *Handler) run(req rpc.ExecuteTaskRequest) {
 		Status:             "success",
 	}
 
+	var output string
 	var execErr error
 	if req.TaskType == "shell" && h.sandboxDir != "" {
-		execErr = h.executeInSandbox(ctx, req)
+		output, execErr = h.executeInSandbox(ctx, req)
 	} else {
-		execErr = executor.Execute(ctx, req.TaskType, req.Payload, map[string]string{
+		output, execErr = executor.Execute(ctx, req.TaskType, req.Payload, map[string]string{
 			"IDEMPOTENCY_KEY":      req.IdempotencyKey,
 			"SHARD_NO":             fmt.Sprintf("%d", req.ShardNo),
 			"SHARD_TOTAL":          fmt.Sprintf("%d", req.ShardTotal),
 			"SCHEDULE_INSTANCE_ID": req.ScheduleInstanceID,
 		})
 	}
+	output = trimExecutionMessage(output)
 
 	if execErr != nil {
 		if errors.Is(execErr, context.DeadlineExceeded) {
@@ -230,6 +233,7 @@ func (h *Handler) run(req rpc.ExecuteTaskRequest) {
 		metrics.DefaultRegistry.IncCounter("worker_executions_total", map[string]string{"status": statusReq.Status})
 		h.logger.Printf("task execution failed schedule_instance_id=%s err=%v", req.ScheduleInstanceID, execErr)
 	} else {
+		statusReq.ErrorMessage = output
 		metrics.DefaultRegistry.IncCounter("worker_executions_total", map[string]string{"status": statusReq.Status})
 		h.logger.Printf("task execution succeeded schedule_instance_id=%s", req.ScheduleInstanceID)
 	}
@@ -244,13 +248,13 @@ func (h *Handler) run(req rpc.ExecuteTaskRequest) {
 	}
 }
 
-func (h *Handler) executeInSandbox(ctx context.Context, req rpc.ExecuteTaskRequest) error {
+func (h *Handler) executeInSandbox(ctx context.Context, req rpc.ExecuteTaskRequest) (string, error) {
 	sb, err := sandbox.New(h.sandboxDir, sandbox.Config{
 		MaxMemoryBytes: h.maxMemBytes,
 		Timeout:        time.Duration(req.TimeoutSeconds) * time.Second,
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer func() {
 		if cleanErr := sb.Cleanup(); cleanErr != nil {
@@ -259,11 +263,19 @@ func (h *Handler) executeInSandbox(ctx context.Context, req rpc.ExecuteTaskReque
 	}()
 
 	h.logger.Printf("sandbox created for schedule_instance_id=%s workdir=%s", req.ScheduleInstanceID, sb.WorkDir())
-	_, err = sb.ShellExec(ctx, req.Payload, map[string]string{
+	out, err := sb.ShellExec(ctx, req.Payload, map[string]string{
 		"IDEMPOTENCY_KEY":      req.IdempotencyKey,
 		"SHARD_NO":             fmt.Sprintf("%d", req.ShardNo),
 		"SHARD_TOTAL":          fmt.Sprintf("%d", req.ShardTotal),
 		"SCHEDULE_INSTANCE_ID": req.ScheduleInstanceID,
 	})
-	return err
+	return string(out), err
+}
+
+func trimExecutionMessage(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) > 1024 {
+		return value[:1024]
+	}
+	return value
 }

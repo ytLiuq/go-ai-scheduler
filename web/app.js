@@ -76,7 +76,63 @@ createApp({
         const e = await resp.json().catch(() => ({}));
         throw new Error(e.error || resp.statusText);
       }
+      if (resp.status === 204) return null;
       return resp.json();
+    }
+
+    function pick(obj, ...keys) {
+      for (const key of keys) {
+        if (obj && obj[key] !== undefined && obj[key] !== null) return obj[key];
+      }
+      return undefined;
+    }
+
+    function normalizeTask(task) {
+      return {
+        ...task,
+        id: pick(task, 'id', 'ID'),
+        name: pick(task, 'name', 'Name'),
+        type: pick(task, 'type', 'Type'),
+        cron_expr: pick(task, 'cron_expr', 'CronExpr'),
+        payload: pick(task, 'payload', 'Payload'),
+        status: pick(task, 'status', 'Status'),
+        timeout_seconds: pick(task, 'timeout_seconds', 'TimeoutSeconds'),
+        max_retry: pick(task, 'max_retry', 'MaxRetry'),
+        retry_policy: pick(task, 'retry_policy', 'RetryPolicy'),
+        route_strategy: pick(task, 'route_strategy', 'RouteStrategy'),
+        next_trigger_time: pick(task, 'next_trigger_time', 'NextTriggerTime')
+      };
+    }
+
+    function normalizeWorker(worker) {
+      return {
+        ...worker,
+        id: pick(worker, 'id', 'ID'),
+        hostname: pick(worker, 'hostname', 'Hostname'),
+        ip: pick(worker, 'ip', 'IP'),
+        callback_url: pick(worker, 'callback_url', 'CallbackURL'),
+        grpc_addr: pick(worker, 'grpc_addr', 'GRPCAddr'),
+        protocol: pick(worker, 'protocol', 'Protocol'),
+        status: pick(worker, 'status', 'Status'),
+        labels: pick(worker, 'labels', 'Labels'),
+        max_concurrency: pick(worker, 'max_concurrency', 'MaxConcurrency'),
+        current_load: pick(worker, 'current_load', 'CurrentLoad'),
+        last_heartbeat_at: pick(worker, 'last_heartbeat_at', 'LastHeartbeatAt')
+      };
+    }
+
+    function normalizeInstance(instance) {
+      return {
+        ...instance,
+        id: pick(instance, 'id', 'ID'),
+        task_id: pick(instance, 'task_id', 'TaskID'),
+        schedule_instance_id: pick(instance, 'schedule_instance_id', 'ScheduleInstanceID'),
+        worker_id: pick(instance, 'worker_id', 'WorkerID'),
+        status: pick(instance, 'status', 'Status'),
+        retry_count: pick(instance, 'retry_count', 'RetryCount'),
+        error_code: pick(instance, 'error_code', 'ErrorCode'),
+        error_message: pick(instance, 'error_message', 'ErrorMessage')
+      };
     }
 
     function safePercent(part, total) {
@@ -155,7 +211,7 @@ createApp({
     async function loadTasks() {
       try {
         const data = await api('/api/v1/tasks');
-        tasks.value = data || [];
+        tasks.value = (data || []).map(normalizeTask);
         stats.tasks = tasks.value.length;
         stats.enabled = tasks.value.filter(t => t.status === 'enabled').length;
       } catch (e) {
@@ -166,7 +222,7 @@ createApp({
     async function loadWorkers() {
       try {
         const data = await api('/api/v1/workers');
-        workers.value = data || [];
+        workers.value = (data || []).map(normalizeWorker);
         stats.workers = workers.value.filter(w => w.status === 'online').length;
       } catch (e) {
         console.error(e);
@@ -176,7 +232,7 @@ createApp({
     async function loadInstances() {
       try {
         const data = await api('/api/v1/task-instances');
-        instances.value = (data || []).slice(0, 50);
+        instances.value = (data || []).map(normalizeInstance).slice(0, 50);
         stats.instances = instances.value.length;
       } catch (e) {
         console.error(e);
@@ -271,6 +327,12 @@ createApp({
     async function triggerTask(task) {
       await api('/api/v1/tasks/' + task.id + '/trigger', 'POST');
       alert('Task triggered');
+    }
+
+    async function deleteTask(task) {
+      if (!confirm('Delete task #' + task.id + ' ' + task.name + '?')) return;
+      await api('/api/v1/tasks/' + task.id, 'DELETE');
+      await Promise.all([loadTasks(), loadInstances()]);
     }
 
     function formatResult(data) {
@@ -416,6 +478,7 @@ createApp({
       saveTask,
       toggleTask,
       triggerTask,
+      deleteTask,
       runCronParse,
       runLogAnalysis,
       runAdvisor,
