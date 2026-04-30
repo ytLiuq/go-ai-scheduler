@@ -59,19 +59,17 @@ func health(w http.ResponseWriter, _ *http.Request) {
 }
 
 func status(w http.ResponseWriter, _ *http.Request, llm *adapter.LLMAdapter) {
-	mode := "heuristics"
 	model := ""
 	endpoint := ""
-	if llm != nil && llm.Enabled() {
-		mode = "llm"
+	llmEnabled := llm != nil && llm.Enabled()
+	if llmEnabled {
 		model = llm.Model()
 		endpoint = llm.Endpoint()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":          "ok",
 		"service":         "ai-service",
-		"mode":            mode,
-		"llm_enabled":     llm != nil && llm.Enabled(),
+		"llm_enabled":     llmEnabled,
 		"model":           model,
 		"endpoint":        endpoint,
 		"api_key_present": llm != nil && llm.HasAPIKey(),
@@ -139,13 +137,13 @@ func analyzeLog(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter,
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"})
 		return
 	}
-	metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "log_analysis", "result": "ok"})
-	var result *loganalysis.AnalysisResponse
-	if llm != nil && llm.Enabled() {
-		result = loganalysis.AnalyzeWithLLM(r.Context(), llm, req.Log, req.ErrorCode, req.TaskType, req.RetryCount)
-	} else {
-		result = loganalysis.Analyze(req.Log)
+	result, err := loganalysis.AnalyzeWithLLM(r.Context(), llm, req.Log, req.ErrorCode, req.TaskType, req.RetryCount)
+	if err != nil {
+		metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "log_analysis", "result": "error"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
 	}
+	metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "log_analysis", "result": "ok"})
 	if aiRepo != nil {
 		outputJSON, _ := json.Marshal(result)
 		inputJSON, _ := json.Marshal(req)

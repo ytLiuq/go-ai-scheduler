@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/example/go-ai-scheduler/internal/ai/adapter"
 )
 
-// AnalysisResponse contains a heuristic or LLM summary for one execution log.
+// ErrLLMRequired is returned when an LLM is not available and the operation
+// cannot fall back to a heuristic implementation.
+var ErrLLMRequired = fmt.Errorf("llm adapter not configured or disabled")
+
+// AnalysisResponse contains an LLM summary for one execution log.
 type AnalysisResponse struct {
 	Summary    string   `json:"summary"`
 	Severity   string   `json:"severity"`
@@ -19,22 +22,13 @@ type AnalysisResponse struct {
 	Confidence float64  `json:"confidence,omitempty"`
 }
 
-// Analyze applies deterministic heuristics to one log payload.
-func Analyze(logText string) *AnalysisResponse {
-	return heuristicAnalyze(logText)
-}
-
-// AnalyzeWithLLM runs analysis, preferring LLM when available.
-func AnalyzeWithLLM(ctx context.Context, llm *adapter.LLMAdapter, logText, errorCode, taskType string, retryCount int) *AnalysisResponse {
-	if llm != nil && llm.Enabled() {
-		if resp := llmAnalyze(ctx, llm, logText, errorCode, taskType, retryCount); resp != nil {
-			return resp
-		}
+// AnalyzeWithLLM runs log analysis via LLM. Returns ErrLLMRequired if no LLM
+// adapter is configured.
+func AnalyzeWithLLM(ctx context.Context, llm *adapter.LLMAdapter, logText, errorCode, taskType string, retryCount int) (*AnalysisResponse, error) {
+	if llm == nil || !llm.Enabled() {
+		return nil, ErrLLMRequired
 	}
-	return heuristicAnalyze(logText)
-}
 
-func llmAnalyze(ctx context.Context, llm *adapter.LLMAdapter, logText, errorCode, taskType string, retryCount int) *AnalysisResponse {
 	systemPrompt := `You are an on-call SRE analyzing task failures. Return ONLY valid JSON:
 {"summary": "<one-line summary>", "severity": "low|medium|high", "categories": ["<category>"], "root_cause": "<root cause>", "fix": "<actionable fix>", "confidence": <0.0-1.0>}`
 
@@ -43,7 +37,7 @@ func llmAnalyze(ctx context.Context, llm *adapter.LLMAdapter, logText, errorCode
 
 	result, err := llm.Complete(ctx, systemPrompt, userPrompt)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("llm log analysis: %w", err)
 	}
 
 	type llmResp struct {
@@ -56,7 +50,7 @@ func llmAnalyze(ctx context.Context, llm *adapter.LLMAdapter, logText, errorCode
 	}
 	var parsed llmResp
 	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
-		return nil
+		return nil, fmt.Errorf("parse llm log analysis output: %w (raw=%s)", err, result)
 	}
 	return &AnalysisResponse{
 		Summary:    parsed.Summary,
@@ -65,48 +59,5 @@ func llmAnalyze(ctx context.Context, llm *adapter.LLMAdapter, logText, errorCode
 		RootCause:  parsed.RootCause,
 		Fix:        parsed.Fix,
 		Confidence: parsed.Confidence,
-	}
-}
-
-func containsAny(s string, substrs ...string) bool {
-	for _, sub := range substrs {
-		if strings.Contains(s, sub) {
-			return true
-		}
-	}
-	return false
-}
-
-func heuristicAnalyze(logText string) *AnalysisResponse {
-	lower := strings.ToLower(logText)
-	response := &AnalysisResponse{
-		Summary:    "No obvious failure signal detected.",
-		Severity:   "info",
-		Categories: []string{"general"},
-	}
-
-	switch {
-	case strings.Contains(lower, "context deadline exceeded") || strings.Contains(lower, "timeout"):
-		response.Summary = "Execution likely exceeded its timeout budget."
-		response.Severity = "high"
-		response.Categories = []string{"timeout", "latency"}
-	case strings.Contains(lower, "500 internal server error") || strings.Contains(lower, "status=500") || strings.Contains(lower, "status 500"):
-		response.Summary = "Upstream HTTP dependency returned a server error."
-		response.Severity = "high"
-		response.Categories = []string{"http", "upstream"}
-	case strings.Contains(lower, "connection refused") || strings.Contains(lower, "no such host") || strings.Contains(lower, "dial tcp"):
-		response.Summary = "Network connectivity or service discovery failure detected."
-		response.Severity = "high"
-		response.Categories = []string{"network"}
-	case strings.Contains(lower, "permission denied"):
-		response.Summary = "Execution failed due to missing permission."
-		response.Severity = "medium"
-		response.Categories = []string{"permission"}
-	case strings.Contains(lower, "panic:") || strings.Contains(lower, "fatal"):
-		response.Summary = "Application crash signal detected in logs."
-		response.Severity = "high"
-		response.Categories = []string{"crash"}
-	}
-
-	return response
+	}, nil
 }

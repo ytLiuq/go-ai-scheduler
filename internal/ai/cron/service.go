@@ -10,6 +10,10 @@ import (
 	"github.com/example/go-ai-scheduler/internal/pkg/cronexpr"
 )
 
+// ErrLLMRequired is returned when an LLM is not available and the operation
+// cannot fall back to a heuristic implementation.
+var ErrLLMRequired = fmt.Errorf("llm adapter not configured or disabled")
+
 // NextRunResponse describes the next scheduled run for one cron expression.
 type NextRunResponse struct {
 	Expression string    `json:"expression"`
@@ -41,13 +45,12 @@ func NextRun(expression string, baseTime time.Time) (*NextRunResponse, error) {
 }
 
 // ParseNaturalLanguage uses LLM to convert a natural language description to a
-// cron expression. Falls back to a heuristic for simple patterns if LLM is
-// unavailable.
+// cron expression. Returns ErrLLMRequired if no LLM adapter is configured.
 func ParseNaturalLanguage(ctx context.Context, llm *adapter.LLMAdapter, input string) (*ParseNaturalResponse, error) {
-	if llm != nil && llm.Enabled() {
-		return parseWithLLM(ctx, llm, input)
+	if llm == nil || !llm.Enabled() {
+		return nil, ErrLLMRequired
 	}
-	return parseHeuristic(input)
+	return parseWithLLM(ctx, llm, input)
 }
 
 func parseWithLLM(ctx context.Context, llm *adapter.LLMAdapter, input string) (*ParseNaturalResponse, error) {
@@ -71,49 +74,4 @@ func parseWithLLM(ctx context.Context, llm *adapter.LLMAdapter, input string) (*
 		return nil, fmt.Errorf("llm returned invalid cron expression %q: %w", resp.CronExpression, valErr)
 	}
 	return &resp, nil
-}
-
-// parseHeuristic handles common patterns without LLM.
-func parseHeuristic(input string) (*ParseNaturalResponse, error) {
-	heuristics := []struct {
-		pattern string
-		expr    string
-	}{
-		{"every monday 9am", "0 9 * * 1"},
-		{"every day at midnight", "0 0 * * *"},
-		{"every day at noon", "0 12 * * *"},
-		{"every 30 minutes", "*/30 * * * *"},
-		{"every 15 minutes", "*/15 * * * *"},
-		{"every 5 minutes", "*/5 * * * *"},
-		{"every weekday", "0 0 * * 1-5"},
-		{"every weekend", "0 0 * * 6,0"},
-		{"every monday", "0 0 * * 1"},
-		{"every minute", "* * * * *"},
-		{"every hour", "0 * * * *"},
-		{"every day", "0 0 * * *"},
-	}
-
-	for _, heuristic := range heuristics {
-		if contains(input, heuristic.pattern) {
-			return &ParseNaturalResponse{
-				CronExpression: heuristic.expr,
-				Explanation:    fmt.Sprintf("matched heuristic pattern: %s -> %s", heuristic.pattern, heuristic.expr),
-				Confidence:     0.8,
-			}, nil
-		}
-	}
-	return nil, fmt.Errorf("unable to parse natural language: %q (try LLM or explicit cron syntax)", input)
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }

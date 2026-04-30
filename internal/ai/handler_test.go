@@ -29,7 +29,7 @@ func TestCronNext(t *testing.T) {
 	}
 }
 
-func TestAnalyzeLog(t *testing.T) {
+func TestAnalyzeLogRequiresLLM(t *testing.T) {
 	router := NewRouter(nil, nil)
 
 	body, _ := json.Marshal(map[string]any{
@@ -39,10 +39,10 @@ func TestAnalyzeLog(t *testing.T) {
 	recorder := httptest.NewRecorder()
 
 	router.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("unexpected status: %d body=%s", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 without LLM, got %d body=%s", recorder.Code, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), "\"timeout\"") {
-		t.Fatalf("expected timeout category in response: %s", recorder.Body.String())
+	if !strings.Contains(recorder.Body.String(), "llm adapter not configured") {
+		t.Fatalf("expected llm error message, got %s", recorder.Body.String())
 	}
 }
