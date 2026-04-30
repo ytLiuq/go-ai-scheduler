@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/example/go-ai-scheduler/internal/alert"
@@ -49,7 +50,8 @@ func main() {
 	router := route.NewRouter(resources.Repositories.Worker)
 	dispatcher := dispatch.NewClientWithRateLimiter(3000) // 3000 dispatch/sec
 	alerter := alert.New(cfg.AlertWebhookURL, l)
-	taskRuntimeService := apiservice.NewTaskRuntimeService(resources.Repositories.Task, resources.Repositories.TaskInstance, resources.Repositories.Worker, router, dispatcher, alerter, cfg.SchedulerURL, l)
+	aiClient := apiservice.NewAIClient(os.Getenv("AI_SERVICE_URL"))
+	taskRuntimeService := apiservice.NewTaskRuntimeService(resources.Repositories.Task, resources.Repositories.TaskInstance, resources.Repositories.Worker, router, dispatcher, alerter, cfg.SchedulerURL, l, aiClient)
 	taskRuntimeHandler := handler.NewTaskRuntimeHandler(taskRuntimeService)
 	eventHandler := handler.NewEventHandler(resources.Repositories.Task, resources.Repositories.TaskInstance, router, dispatcher, l)
 	leaderCtx := context.Background()

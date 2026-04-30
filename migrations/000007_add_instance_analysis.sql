@@ -1,0 +1,1 @@
+ALTER TABLE task_instance ADD COLUMN IF NOT EXISTS analysis_json TEXT NOT NULL;

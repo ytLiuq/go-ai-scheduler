@@ -16,6 +16,7 @@ type TaskInstance struct {
 	RetryCount         int
 	ErrorCode          string
 	ErrorMessage       string
+	AnalysisJSON       string    // AI analysis result for failed instances
 	NextRetryTime      time.Time
 	TraceID            string
 	CreatedAt          time.Time

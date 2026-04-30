@@ -209,3 +209,21 @@ func (r *TaskInstanceRepository) UpdateInstanceResult(_ context.Context, schedul
 	instance.UpdatedAt = time.Now()
 	return nil
 }
+
+// UpdateInstanceAnalysis stores the AI analysis result.
+func (r *TaskInstanceRepository) UpdateInstanceAnalysis(_ context.Context, scheduleID string, analysisJSON string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	id, ok := r.bySchedule[scheduleID]
+	if !ok {
+		return errTaskInstanceNotFound
+	}
+	instance, ok := r.instances[id]
+	if !ok {
+		return errTaskInstanceNotFound
+	}
+	instance.AnalysisJSON = analysisJSON
+	instance.UpdatedAt = time.Now()
+	return nil
+}

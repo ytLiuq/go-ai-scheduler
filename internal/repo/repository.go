@@ -36,6 +36,7 @@ type TaskInstanceRepository interface {
 	UpdateInstanceStatus(ctx context.Context, instanceID int64, status string) error
 	UpdateInstanceDispatch(ctx context.Context, instanceID int64, workerID string, dispatchTime string) error
 	UpdateInstanceResult(ctx context.Context, scheduleID string, status string, errorCode string, errorMessage string) error
+	UpdateInstanceAnalysis(ctx context.Context, scheduleID string, analysisJSON string) error
 }
 
 // AIAnalysisRepository persists AI analysis audit records.

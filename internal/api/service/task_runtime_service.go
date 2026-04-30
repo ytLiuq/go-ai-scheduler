@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -38,6 +39,7 @@ type TaskRuntimeService struct {
 	alerter      *alert.Alerter
 	logger       *log.Logger
 	schedulerURL string
+	aiClient     *AIClient
 }
 
 // NewTaskRuntimeService creates a TaskRuntimeService.
@@ -50,6 +52,7 @@ func NewTaskRuntimeService(
 	alerter *alert.Alerter,
 	schedulerURL string,
 	logger *log.Logger,
+	aiClient *AIClient,
 ) *TaskRuntimeService {
 	return &TaskRuntimeService{
 		tasks:        tasks,
@@ -60,6 +63,7 @@ func NewTaskRuntimeService(
 		alerter:      alerter,
 		logger:       logger,
 		schedulerURL: schedulerURL,
+		aiClient:     aiClient,
 	}
 }
 
@@ -84,6 +88,10 @@ func (s *TaskRuntimeService) ReportStatus(ctx context.Context, req TaskStatusRep
 	if req.Status == "running" {
 		s.logger.Printf("task running schedule_instance_id=%s worker_id=%s", req.ScheduleInstanceID, req.WorkerID)
 		return nil
+	}
+	// On failure, auto-analyze with AI service asynchronously.
+	if req.Status == "failed" && s.aiClient != nil {
+		go s.analyzeFailedInstance(instance, req)
 	}
 	// On success, advance downstream tasks so they become due.
 	if req.Status == "success" {
@@ -290,6 +298,30 @@ func shouldRetryOnErrors(retryPolicy, retryOnErrors, errorCode string) bool {
 		}
 	}
 	return false
+}
+
+func (s *TaskRuntimeService) analyzeFailedInstance(instance *model.TaskInstance, req TaskStatusReportRequest) {
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+
+	task, err := s.tasks.GetTask(ctx, instance.TaskID)
+	if err != nil {
+		s.logger.Printf("ai analysis: get task %d failed: %v", instance.TaskID, err)
+		return
+	}
+
+	result, err := s.aiClient.AnalyzeLog(ctx, req.ErrorMessage, req.ErrorCode, task.Type, instance.RetryCount)
+	if err != nil {
+		s.logger.Printf("ai analysis failed schedule_instance_id=%s err=%v", instance.ScheduleInstanceID, err)
+		return
+	}
+
+	analysisJSON, _ := json.Marshal(result)
+	if err := s.instances.UpdateInstanceAnalysis(ctx, instance.ScheduleInstanceID, string(analysisJSON)); err != nil {
+		s.logger.Printf("ai analysis persist failed schedule_instance_id=%s err=%v", instance.ScheduleInstanceID, err)
+		return
+	}
+	s.logger.Printf("ai analysis completed schedule_instance_id=%s severity=%s", instance.ScheduleInstanceID, result.Severity)
 }
 
 func retryScheduleInstanceID(taskID int64, retryCount int) string {

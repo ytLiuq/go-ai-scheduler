@@ -16,6 +16,8 @@ createApp({
     const workers = ref([]);
     const instances = ref([]);
     const taskModal = ref(null);
+    const nlTaskInput = ref('');
+    const nlTaskLoading = ref(false);
     const editingTask = reactive({
       id: 0,
       name: '',
@@ -133,7 +135,8 @@ createApp({
         retry_count: pick(instance, 'retry_count', 'RetryCount'),
         error_code: pick(instance, 'error_code', 'ErrorCode'),
         error_message: pick(instance, 'error_message', 'ErrorMessage'),
-        trigger_time: pick(instance, 'trigger_time', 'TriggerTime')
+        trigger_time: pick(instance, 'trigger_time', 'TriggerTime'),
+        ai_analysis: pick(instance, 'ai_analysis', 'AnalysisJSON')
       };
     }
 
@@ -298,6 +301,28 @@ createApp({
       taskModal.value = true;
     }
 
+    async function parseNLTask() {
+      if (!nlTaskInput.value.trim()) return;
+      nlTaskLoading.value = true;
+      try {
+        const data = await api('/api/v1/ai/task/create', 'POST', { input: nlTaskInput.value });
+        Object.assign(editingTask, {
+          name: data.name || '',
+          type: data.type || 'shell',
+          image: data.image || '',
+          cron_expr: data.cron_expr || '',
+          payload: data.payload || '',
+          max_retry: data.max_retry || 0,
+          retry_policy: data.retry_policy || 'fixed_interval'
+        });
+        nlTaskInput.value = '';
+      } catch (e) {
+        alert('AI 解析失败: ' + e.message);
+      } finally {
+        nlTaskLoading.value = false;
+      }
+    }
+
     async function saveTask() {
       try {
         const body = {
@@ -349,6 +374,18 @@ createApp({
       const d = new Date(value);
       if (isNaN(d.getTime())) return value;
       return d.toLocaleString('zh-CN', { hour12: false });
+    }
+
+    function formatAIHint(raw) {
+      if (!raw) return '';
+      try {
+        const a = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        return (a.summary || '') +
+          '\nSeverity: ' + (a.severity || '--') +
+          '\nRoot cause: ' + (a.root_cause || '--') +
+          '\nFix: ' + (a.fix || '--') +
+          '\nConfidence: ' + (typeof a.confidence === 'number' ? Math.round(a.confidence * 100) + '%' : '--');
+      } catch { return raw; }
     }
 
     function formatPercent(value) {
@@ -487,6 +524,9 @@ createApp({
       loadInstances,
       loadAIStatus,
       showTaskModal,
+      nlTaskInput,
+      nlTaskLoading,
+      parseNLTask,
       saveTask,
       toggleTask,
       triggerTask,
@@ -495,6 +535,7 @@ createApp({
       runLogAnalysis,
       runAdvisor,
       formatTime,
+      formatAIHint,
       formatPercent,
       taskStatusClass,
       taskStatusText,

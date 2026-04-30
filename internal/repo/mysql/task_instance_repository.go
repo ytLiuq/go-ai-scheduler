@@ -59,7 +59,7 @@ func (r *TaskInstanceRepository) CreateInstance(ctx context.Context, instance *m
 func (r *TaskInstanceRepository) GetInstance(ctx context.Context, instanceID int64) (*model.TaskInstance, error) {
 	const query = `
 		SELECT id, task_id, schedule_instance_id, trigger_time, dispatch_time, worker_id,
-		       status, retry_count, error_code, error_message, trace_id, next_retry_time, created_at, updated_at
+		       status, retry_count, error_code, error_message, analysis_json, trace_id, next_retry_time, created_at, updated_at
 		FROM task_instance
 		WHERE id = ?
 	`
@@ -71,7 +71,7 @@ func (r *TaskInstanceRepository) GetInstance(ctx context.Context, instanceID int
 func (r *TaskInstanceRepository) GetInstanceByScheduleID(ctx context.Context, scheduleID string) (*model.TaskInstance, error) {
 	const query = `
 		SELECT id, task_id, schedule_instance_id, trigger_time, dispatch_time, worker_id,
-		       status, retry_count, error_code, error_message, trace_id, next_retry_time, created_at, updated_at
+		       status, retry_count, error_code, error_message, analysis_json, trace_id, next_retry_time, created_at, updated_at
 		FROM task_instance
 		WHERE schedule_instance_id = ?
 	`
@@ -83,7 +83,7 @@ func (r *TaskInstanceRepository) GetInstanceByScheduleID(ctx context.Context, sc
 func (r *TaskInstanceRepository) ListInstances(ctx context.Context) ([]*model.TaskInstance, error) {
 	const query = `
 		SELECT id, task_id, schedule_instance_id, trigger_time, dispatch_time, worker_id,
-		       status, retry_count, error_code, error_message, trace_id, next_retry_time, created_at, updated_at
+		       status, retry_count, error_code, error_message, analysis_json, trace_id, next_retry_time, created_at, updated_at
 		FROM task_instance
 		ORDER BY id
 	`
@@ -99,7 +99,7 @@ func (r *TaskInstanceRepository) ListInstances(ctx context.Context) ([]*model.Ta
 func (r *TaskInstanceRepository) ListInstancesByStatus(ctx context.Context, status string, limit int) ([]*model.TaskInstance, error) {
 	const query = `
 		SELECT id, task_id, schedule_instance_id, trigger_time, dispatch_time, worker_id,
-		       status, retry_count, error_code, error_message, trace_id, next_retry_time, created_at, updated_at
+		       status, retry_count, error_code, error_message, analysis_json, trace_id, next_retry_time, created_at, updated_at
 		FROM task_instance
 		WHERE status = ?
 		ORDER BY created_at
@@ -117,7 +117,7 @@ func (r *TaskInstanceRepository) ListInstancesByStatus(ctx context.Context, stat
 func (r *TaskInstanceRepository) ListDueRetryInstances(ctx context.Context, cutoff time.Time, limit int) ([]*model.TaskInstance, error) {
 	const query = `
 		SELECT id, task_id, schedule_instance_id, trigger_time, dispatch_time, worker_id,
-		       status, retry_count, error_code, error_message, trace_id, next_retry_time, created_at, updated_at
+		       status, retry_count, error_code, error_message, analysis_json, trace_id, next_retry_time, created_at, updated_at
 		FROM task_instance
 		WHERE status = 'retry_waiting' AND (next_retry_time IS NULL OR next_retry_time <= ?)
 		ORDER BY created_at
@@ -198,6 +198,7 @@ func scanTaskInstance(scanner interface{ Scan(dest ...any) error }) (*model.Task
 		&instance.RetryCount,
 		&instance.ErrorCode,
 		&instance.ErrorMessage,
+		&instance.AnalysisJSON,
 		&instance.TraceID,
 		&nextRetryTime,
 		&instance.CreatedAt,
@@ -227,6 +228,18 @@ func scanTaskInstances(rows *sql.Rows) ([]*model.TaskInstance, error) {
 		return nil, fmt.Errorf("iterate task instances: %w", err)
 	}
 	return instances, nil
+}
+
+// UpdateInstanceAnalysis stores the AI analysis result for a failed instance.
+func (r *TaskInstanceRepository) UpdateInstanceAnalysis(ctx context.Context, scheduleID string, analysisJSON string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE task_instance SET analysis_json = ?, updated_at = CURRENT_TIMESTAMP WHERE schedule_instance_id = ?`,
+		analysisJSON, scheduleID,
+	)
+	if err != nil {
+		return fmt.Errorf("update instance analysis: %w", err)
+	}
+	return nil
 }
 
 func parseDispatchTime(value string) (sql.NullTime, error) {

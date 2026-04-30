@@ -724,6 +724,16 @@ tbody tr:hover{
   word-break:break-word;
 }
 
+.ai-badge{
+  display:inline-block;
+  padding:2px 8px;
+  border-radius:4px;
+  background:var(--info);
+  color:#fff;
+  font-size:12px;
+  font-weight:700;
+  cursor:help;
+}
 .ai-status-banner{
   display:flex;
   justify-content:space-between;
@@ -1246,6 +1256,7 @@ tbody tr:hover{
                     <th>任务</th>
                     <th>触发时间</th>
                     <th>状态</th>
+                    <th>AI 分析</th>
                     <th>Worker</th>
                     <th>重试</th>
                     <th>结果 / 消息</th>
@@ -1264,6 +1275,10 @@ tbody tr:hover{
                     <td><span :class="'badge '+instanceStatusClass(i.status)">{{instanceStatusText(i.status)}}</span></td>
                     <td>{{i.worker_id || '--'}}</td>
                     <td>{{i.retry_count}}</td>
+                    <td>
+                      <span v-if="i.ai_analysis" class="row-sub ai-badge" :title="formatAIHint(i.ai_analysis)">AI</span>
+                      <span v-else class="row-sub">--</span>
+                    </td>
                     <td><span class="row-sub">{{i.error_message || '--'}}</span></td>
                   </tr>
                 </tbody>
@@ -1503,6 +1518,19 @@ tbody tr:hover{
             <div class="eyebrow">Task Editor</div>
             <h3>{{editingTask.id ? '编辑任务 #' + editingTask.id : '新建任务'}}</h3>
             <p>把基础信息、执行参数和调度策略分开呈现，降低长表单的阅读负担。</p>
+          </div>
+        </div>
+
+        <div class="modal-section" v-if="!editingTask.id">
+          <h4>一句话创建</h4>
+          <div class="form-grid">
+            <div class="form-group form-span-2">
+              <input class="input" v-model="nlTaskInput" placeholder="例如：每天早上9点跑 alpine echo hello，失败重试3次" @keyup.enter="parseNLTask()">
+              <div class="form-help">输入自然语言描述，AI 会自动解析并预填下方的任务信息。</div>
+            </div>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-primary" @click="parseNLTask()" :disabled="nlTaskLoading || !nlTaskInput.trim()">{{nlTaskLoading ? '解析中...' : 'AI 解析'}}</button>
           </div>
         </div>
 
