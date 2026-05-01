@@ -1,0 +1,18 @@
+CREATE TABLE IF NOT EXISTS ai_conversation (
+    id VARCHAR(36) PRIMARY KEY,
+    title VARCHAR(256) NOT NULL DEFAULT '',
+    user_id VARCHAR(64) NOT NULL DEFAULT '',
+    message_count INT NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS ai_message (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    conversation_id VARCHAR(36) NOT NULL,
+    role VARCHAR(16) NOT NULL,
+    content TEXT NOT NULL,
+    tool_calls_json JSON,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_conv_time (conversation_id, created_at)
+);
