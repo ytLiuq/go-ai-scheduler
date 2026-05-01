@@ -62,6 +62,17 @@ createApp({
       resultObj: null
     });
 
+    // --- Chat state ---
+    const conversations = ref([]);
+    const currentConversationId = ref('');
+    const chatMessages = ref([]);
+    const chatInput = ref('');
+    const chatStreaming = ref(false);
+    const chatStreamContent = ref('');
+    const chatToolCalls = ref([]);
+    const chatError = ref('');
+    const chatMessagesEl = ref(null);
+
     const headers = () => token.value
       ? { Authorization: 'Bearer ' + token.value, 'Content-Type': 'application/json' }
       : { 'Content-Type': 'application/json' };
@@ -482,6 +493,214 @@ createApp({
       }
     }
 
+    // --- Chat functions ---
+
+    function renderMarkdown(text) {
+      if (!text) return '';
+      // Escape HTML first, then convert basic markdown.
+      let html = text
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/\n/g, '<br>');
+      // Convert markdown links: [text](url)
+      html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+      return html;
+    }
+
+    async function loadConversations() {
+      try {
+        const data = await api('/api/v1/ai/conversations');
+        conversations.value = (data && data.conversations) ? data.conversations : [];
+      } catch (e) {
+        console.error('load conversations:', e);
+        conversations.value = [];
+      }
+    }
+
+    async function selectConversation(convId) {
+      currentConversationId.value = convId;
+      chatMessages.value = [];
+      chatError.value = '';
+      try {
+        // Load history via conversations endpoint — we need a new endpoint for messages.
+        // For now, start fresh with this conversation ID.
+        chatMessages.value = [];
+      } catch (e) {
+        console.error('load messages:', e);
+      }
+    }
+
+    function newConversation() {
+      currentConversationId.value = '';
+      chatMessages.value = [];
+      chatStreamContent.value = '';
+      chatToolCalls.value = [];
+      chatError.value = '';
+      chatInput.value = '';
+    }
+
+    function scrollChatToBottom() {
+      setTimeout(() => {
+        const el = chatMessagesEl.value;
+        if (el) el.scrollTop = el.scrollHeight;
+      }, 50);
+    }
+
+    async function sendChatMessage() {
+      const msg = chatInput.value.trim();
+      if (!msg || chatStreaming.value) return;
+      chatInput.value = '';
+      chatError.value = '';
+      chatStreaming.value = true;
+      chatStreamContent.value = '';
+      chatToolCalls.value = [];
+
+      // Add user message.
+      chatMessages.value.push({ role: 'user', content: msg });
+      scrollChatToBottom();
+
+      const tokenVal = token.value;
+      const headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream'
+      };
+      if (tokenVal) headers['Authorization'] = 'Bearer ' + tokenVal;
+
+      try {
+        const resp = await fetch('/api/v1/ai/chat', {
+          method: 'POST',
+          headers: headers,
+          body: JSON.stringify({
+            message: msg,
+            conversation_id: currentConversationId.value || ''
+          })
+        });
+
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({ error: resp.statusText }));
+          throw new Error(err.error || resp.statusText);
+        }
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let assistantContent = '';
+        const toolCallNames = [];
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          // Parse SSE events from buffer.
+          const lines = buffer.split('\n');
+          buffer = '';
+          let currentEvent = '';
+          let currentData = '';
+
+          for (const line of lines) {
+            if (line.startsWith('event: ')) {
+              currentEvent = line.slice(7).trim();
+            } else if (line.startsWith('data: ')) {
+              currentData = line.slice(6).trim();
+            } else if (line === '') {
+              // End of event — process it.
+              if (currentEvent && currentData) {
+                try {
+                  const payload = JSON.parse(currentData);
+                  processSSEEvent(currentEvent, payload);
+                } catch(e) { /* skip malformed */ }
+              }
+              currentEvent = '';
+              currentData = '';
+            } else {
+              // Partial line — put back in buffer.
+              buffer += line;
+            }
+          }
+        }
+
+        // Process any remaining event.
+        if (currentEvent && currentData) {
+          try {
+            const payload = JSON.parse(currentData);
+            processSSEEvent(currentEvent, payload);
+          } catch(e) { /* skip */ }
+        }
+
+        // Save assistant message.
+        if (assistantContent || toolCallNames.length) {
+          chatMessages.value.push({
+            role: 'assistant',
+            content: assistantContent,
+            toolCalls: chatToolCalls.value.map(tc => ({
+              name: tc.name,
+              result: tc.result,
+              resultStr: tc.result ? JSON.stringify(tc.result, null, 2) : ''
+            }))
+          });
+        }
+
+        function processSSEEvent(event, payload) {
+          switch (event) {
+            case 'text':
+              assistantContent += payload.delta || '';
+              chatStreamContent.value = assistantContent;
+              scrollChatToBottom();
+              break;
+            case 'tool_call':
+              chatToolCalls.value.push({
+                name: payload.name,
+                args: payload.args,
+                done: false,
+                result: null,
+                resultStr: ''
+              });
+              scrollChatToBottom();
+              break;
+            case 'tool_result':
+              const lastPending = chatToolCalls.value.filter(tc => !tc.done).pop();
+              if (lastPending) {
+                lastPending.done = true;
+                lastPending.result = payload.result;
+                lastPending.resultStr = JSON.stringify(payload.result, null, 2);
+              }
+              if (payload.name) toolCallNames.push(payload.name);
+              scrollChatToBottom();
+              break;
+            case 'done':
+              chatStreaming.value = false;
+              chatStreamContent.value = '';
+              chatToolCalls.value = [];
+              break;
+            case 'conversation_id':
+              if (payload.id && !currentConversationId.value) {
+                currentConversationId.value = payload.id;
+                loadConversations();
+              }
+              break;
+            case 'error':
+              chatError.value = payload.message || 'Unknown error';
+              chatStreaming.value = false;
+              break;
+          }
+        }
+      } catch (e) {
+        chatError.value = e.message;
+      } finally {
+        chatStreaming.value = false;
+        chatStreamContent.value = '';
+        chatToolCalls.value = [];
+      }
+    }
+
+    function sendQuickMsg(msg) {
+      chatInput.value = msg;
+      sendChatMessage();
+    }
+
     onMounted(() => {
       if (token.value) {
         Promise.all([loadTasks(), loadWorkers(), loadInstances(), loadAIStatus()]);
@@ -534,6 +753,21 @@ createApp({
       runCronParse,
       runLogAnalysis,
       runAdvisor,
+      renderMarkdown,
+      conversations,
+      currentConversationId,
+      chatMessages,
+      chatInput,
+      chatStreaming,
+      chatStreamContent,
+      chatToolCalls,
+      chatError,
+      chatMessagesEl,
+      loadConversations,
+      selectConversation,
+      newConversation,
+      sendChatMessage,
+      sendQuickMsg,
       formatTime,
       formatAIHint,
       formatPercent,
