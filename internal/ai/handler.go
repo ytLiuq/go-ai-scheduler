@@ -10,7 +10,9 @@ import (
 	aiadvisor "github.com/example/go-ai-scheduler/internal/ai/advisor"
 	aicron "github.com/example/go-ai-scheduler/internal/ai/cron"
 	"github.com/example/go-ai-scheduler/internal/ai/loganalysis"
+	"github.com/example/go-ai-scheduler/internal/ai/memory"
 	"github.com/example/go-ai-scheduler/internal/ai/taskparser"
+	"github.com/example/go-ai-scheduler/internal/ai/tools"
 	"github.com/example/go-ai-scheduler/internal/model"
 	"github.com/example/go-ai-scheduler/internal/pkg/metrics"
 	"github.com/example/go-ai-scheduler/internal/repo"
@@ -47,7 +49,7 @@ type advisorRequest struct {
 }
 
 // NewRouter wires AI helper endpoints.
-func NewRouter(llm *adapter.LLMAdapter, aiRepo repo.AIAnalysisRepository) http.Handler {
+func NewRouter(llm *adapter.LLMAdapter, aiRepo repo.AIAnalysisRepository, registry *tools.Registry, store *memory.Store) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", health)
 	mux.HandleFunc("GET /api/v1/status", func(w http.ResponseWriter, r *http.Request) { status(w, r, llm) })
@@ -57,6 +59,9 @@ func NewRouter(llm *adapter.LLMAdapter, aiRepo repo.AIAnalysisRepository) http.H
 	mux.HandleFunc("/api/v1/log-analysis/analyze", func(w http.ResponseWriter, r *http.Request) { analyzeLog(w, r, llm, aiRepo) })
 	mux.HandleFunc("POST /api/v1/advisor/generate", func(w http.ResponseWriter, r *http.Request) { generateAdvice(w, r, llm, aiRepo) })
 	mux.HandleFunc("POST /api/v1/task/create", func(w http.ResponseWriter, r *http.Request) { parseTaskNatural(w, r, llm, aiRepo) })
+	mux.HandleFunc("POST /api/v1/chat", func(w http.ResponseWriter, r *http.Request) { handleChat(w, r, llm, registry, store) })
+	// GET conversations list
+	mux.HandleFunc("GET /api/v1/conversations", func(w http.ResponseWriter, r *http.Request) { listConversations(w, r, store) })
 	return metrics.Instrument("ai-service", mux)
 }
 
