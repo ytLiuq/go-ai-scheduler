@@ -36,7 +36,7 @@ func TestHTTPInternalProtocolEndToEnd(t *testing.T) {
 	router := route.NewRouter(workerRepo)
 	dispatcher := schedulerdispatch.NewClient()
 	workerService := apiservice.NewWorkerService(workerRepo)
-	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, nil, "", logr)
+	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, nil, "", logr, nil)
 
 	schedulerServer := httptest.NewServer(handler.NewSchedulerRouter(
 		handler.NewWorkerHandler(workerService),
@@ -109,7 +109,7 @@ func TestGRPCInternalProtocolEndToEnd(t *testing.T) {
 	router := route.NewRouter(workerRepo)
 	dispatcher := schedulerdispatch.NewClient()
 	workerService := apiservice.NewWorkerService(workerRepo)
-	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, nil, "", logr)
+	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, nil, "", logr, nil)
 
 	schedulerLis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -196,7 +196,7 @@ func TestHTTPInternalProtocolRetryThenSuccess(t *testing.T) {
 		nil, nil,
 	))
 	defer schedulerServer.Close()
-	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, nil, schedulerServer.URL, logr)
+	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, nil, schedulerServer.URL, logr, nil)
 	schedulerServer.Config.Handler = handler.NewSchedulerRouter(
 		handler.NewWorkerHandler(workerService),
 		handler.NewTaskRuntimeHandler(runtimeService), nil,
@@ -277,7 +277,7 @@ func TestGRPCInternalProtocolRetryThenSuccess(t *testing.T) {
 	}
 	defer schedulerLis.Close()
 
-	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, nil, "", logr)
+	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, nil, "", logr, nil)
 	schedulerServer := grpc.NewServer()
 	schedulergrpc.Register(schedulerServer, schedulergrpc.NewServer(workerService, runtimeService))
 	go func() {
@@ -362,7 +362,7 @@ func TestHTTPInternalProtocolTimeoutRetryThenSuccess(t *testing.T) {
 		nil, nil,
 	))
 	defer schedulerServer.Close()
-	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, nil, schedulerServer.URL, logr)
+	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, nil, schedulerServer.URL, logr, nil)
 	schedulerServer.Config.Handler = handler.NewSchedulerRouter(
 		handler.NewWorkerHandler(workerService),
 		handler.NewTaskRuntimeHandler(runtimeService), nil,
