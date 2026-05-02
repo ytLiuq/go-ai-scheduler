@@ -252,8 +252,8 @@ createApp({
 
     async function loadInstances() {
       try {
-        const data = await api('/api/v1/task-instances');
-        instances.value = (data || []).map(normalizeInstance).slice(0, 50);
+        const data = await api('/api/v1/task-instances?limit=50');
+        instances.value = (data || []).map(normalizeInstance);
         stats.instances = instances.value.length;
       } catch (e) {
         console.error(e);
@@ -474,7 +474,7 @@ createApp({
 
     async function loadFailedInstances() {
       try {
-        const data = await api('/api/v1/task-instances?status=failed');
+        const data = await api('/api/v1/task-instances?status=failed&limit=20');
         aiLog.failedOptions = (data || []).map(normalizeInstance).slice(0, 20);
       } catch (e) {
         console.error('load failed instances:', e);

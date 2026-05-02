@@ -19,14 +19,30 @@ func NewTaskInstanceHandler(service *service.TaskInstanceService) *TaskInstanceH
 	return &TaskInstanceHandler{service: service}
 }
 
-// List handles task instance listing.
+// List handles task instance listing with optional query params.
 func (h *TaskInstanceHandler) List(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w, r.Method)
 		return
 	}
 
-	instances, err := h.service.ListInstances(r.Context())
+	q := r.URL.Query()
+	params := service.ListInstancesParams{
+		Status: q.Get("status"),
+	}
+	if v, err := strconv.Atoi(q.Get("limit")); err == nil && v > 0 {
+		params.Limit = v
+	} else {
+		params.Limit = 50
+	}
+	if v, err := strconv.Atoi(q.Get("offset")); err == nil && v >= 0 {
+		params.Offset = v
+	}
+	if v, err := strconv.ParseInt(q.Get("task_id"), 10, 64); err == nil && v > 0 {
+		params.TaskID = v
+	}
+
+	instances, err := h.service.ListInstancesWithParams(r.Context(), params)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
