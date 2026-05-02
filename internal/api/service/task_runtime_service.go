@@ -27,6 +27,8 @@ type TaskStatusReportRequest struct {
 	Status             string `json:"status"`
 	ErrorCode          string `json:"error_code"`
 	ErrorMessage       string `json:"error_message"`
+	StartedAt          string `json:"started_at,omitempty"`
+	FinishedAt         string `json:"finished_at,omitempty"`
 }
 
 // TaskRuntimeService updates runtime execution state.
@@ -83,6 +85,23 @@ func (s *TaskRuntimeService) ReportStatus(ctx context.Context, req TaskStatusRep
 	}
 	if err := s.instances.UpdateInstanceResult(ctx, req.ScheduleInstanceID, req.Status, req.ErrorCode, req.ErrorMessage); err != nil {
 		return err
+	}
+	// Persist execution timestamps if provided by the worker.
+	if req.StartedAt != "" || req.FinishedAt != "" {
+		var startedAt, finishedAt time.Time
+		if req.StartedAt != "" {
+			if t, err := time.Parse(time.RFC3339Nano, req.StartedAt); err == nil {
+				startedAt = t
+			}
+		}
+		if req.FinishedAt != "" {
+			if t, err := time.Parse(time.RFC3339Nano, req.FinishedAt); err == nil {
+				finishedAt = t
+			}
+		}
+		if err := s.instances.UpdateInstanceTimestamps(ctx, req.ScheduleInstanceID, startedAt, finishedAt); err != nil {
+			s.logger.Printf("update timestamps failed schedule_instance_id=%s err=%v", req.ScheduleInstanceID, err)
+		}
 	}
 	metrics.DefaultRegistry.IncCounter("task_runtime_reports_total", map[string]string{"status": req.Status})
 	if req.Status == "running" {

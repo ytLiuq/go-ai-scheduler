@@ -271,3 +271,26 @@ func (r *TaskInstanceRepository) UpdateInstanceAnalysis(_ context.Context, sched
 	instance.UpdatedAt = time.Now()
 	return nil
 }
+
+// UpdateInstanceTimestamps stores execution start and finish times.
+func (r *TaskInstanceRepository) UpdateInstanceTimestamps(_ context.Context, scheduleID string, startedAt, finishedAt time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	id, ok := r.bySchedule[scheduleID]
+	if !ok {
+		return errTaskInstanceNotFound
+	}
+	instance, ok := r.instances[id]
+	if !ok {
+		return errTaskInstanceNotFound
+	}
+	if !startedAt.IsZero() {
+		instance.StartedAt = startedAt
+	}
+	if !finishedAt.IsZero() {
+		instance.FinishedAt = finishedAt
+	}
+	instance.UpdatedAt = time.Now()
+	return nil
+}

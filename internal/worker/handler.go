@@ -201,6 +201,7 @@ func (h *Handler) run(req rpc.ExecuteTaskRequest) {
 	defer h.cancels.Delete(req.ScheduleInstanceID)
 	h.cancels.Store(req.ScheduleInstanceID, cancel)
 
+	startedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	statusReq := apiservice.TaskStatusReportRequest{
 		ScheduleInstanceID: req.ScheduleInstanceID,
 		WorkerID:           h.workerID,
@@ -237,6 +238,9 @@ func (h *Handler) run(req rpc.ExecuteTaskRequest) {
 		metrics.DefaultRegistry.IncCounter("worker_executions_total", map[string]string{"status": statusReq.Status})
 		h.logger.Printf("task execution succeeded schedule_instance_id=%s", req.ScheduleInstanceID)
 	}
+
+	statusReq.StartedAt = startedAt
+	statusReq.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 
 	if err := h.reporter.Report(context.Background(), req.SchedulerURL, statusReq); err != nil {
 		h.logger.Printf("report task status failed schedule_instance_id=%s err=%v", req.ScheduleInstanceID, err)

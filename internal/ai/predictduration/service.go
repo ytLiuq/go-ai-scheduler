@@ -40,6 +40,14 @@ func ComputeStats(instances []*model.TaskInstance) DurationStats {
 		if inst.Status != "success" && inst.Status != "failed" {
 			continue
 		}
+		// Prefer explicit started_at/finished_at for accuracy.
+		if !inst.StartedAt.IsZero() && !inst.FinishedAt.IsZero() {
+			dur := inst.FinishedAt.Sub(inst.StartedAt).Seconds()
+			if dur >= 0 {
+				durations = append(durations, dur)
+				continue
+			}
+		}
 		if inst.DispatchTime.IsZero() {
 			continue
 		}

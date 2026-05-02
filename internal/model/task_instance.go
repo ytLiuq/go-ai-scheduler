@@ -11,6 +11,8 @@ type TaskInstance struct {
 	ShardTotal         int    // total shard count (0 for non-sharded)
 	TriggerTime        time.Time
 	DispatchTime       time.Time
+	StartedAt          time.Time
+	FinishedAt         time.Time
 	WorkerID           string
 	Status             string
 	RetryCount         int
