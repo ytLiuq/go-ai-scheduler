@@ -1303,137 +1303,47 @@ tbody tr:hover{
 
     <template v-if="token">
       <div class="main">
-        <template v-if="tab==='dashboard'">
-          <div class="hero">
-            <div class="panel panel-pad hero-panel">
-              <div class="hero-content">
-                <div class="eyebrow" style="background:rgba(255,255,255,.12);color:#f8fafc">Operations Overview</div>
-                <h2>当前控制台已经能看数据，现在需要把重点放到运行态与异常态。</h2>
-                <p>首页聚焦任务规模、Worker 可用性、实例失败面和积压风险，让调度系统最关键的状态在第一屏内完成判断。</p>
-                <div class="hero-metrics">
-                  <div class="hero-metric">
-                    <strong>{{stats.enabled}}</strong>
-                    <span>启用中的任务</span>
-                  </div>
-                  <div class="hero-metric">
-                    <strong>{{failedInstances}}</strong>
-                    <span>最近失败实例</span>
-                  </div>
-                  <div class="hero-metric">
-                    <strong>{{avgWorkerLoadLabel}}</strong>
-                    <span>平均 Worker 负载</span>
-                  </div>
-                </div>
+        <template v-if=”tab==='dashboard'”>
+          <div class=”stats”>
+            <div class=”stat” v-for=”item in dashboardStats” :key=”item.label”>
+              <div class=”stat-top”>
+                <div class=”stat-k”>{{item.label}}</div>
+                <div class=”stat-icon”>{{item.icon}}</div>
               </div>
-            </div>
-
-            <div class="panel panel-pad">
-              <div class="section-title">
-                <div>
-                  <h3>即时摘要</h3>
-                  <p>从可用 Worker、任务启用率和失败占比快速判断系统是否稳定。</p>
-                </div>
-              </div>
-              <div class="summary-stack" style="margin-top:18px">
-                <div class="summary-item">
-                  <div>
-                    <div class="label">任务启用率</div>
-                    <div class="hint">{{stats.enabled}} / {{stats.tasks}} tasks active</div>
-                  </div>
-                  <div class="value">{{taskEnableRate}}</div>
-                </div>
-                <div class="summary-item">
-                  <div>
-                    <div class="label">Worker 在线率</div>
-                    <div class="hint">{{stats.workers}} / {{workers.length || 0}} workers online</div>
-                  </div>
-                  <div class="value">{{workerOnlineRate}}</div>
-                </div>
-                <div class="summary-item">
-                  <div>
-                    <div class="label">实例失败占比</div>
-                    <div class="hint">按最近加载的实例数据计算</div>
-                  </div>
-                  <div class="value">{{instanceFailureRate}}</div>
-                </div>
-              </div>
+              <div class=”stat-v”>{{item.value}}</div>
+              <div class=”stat-note”>{{item.note}}</div>
             </div>
           </div>
 
-          <div class="stats">
-            <div class="stat" v-for="item in dashboardStats" :key="item.label">
-              <div class="stat-top">
-                <div class="stat-k">{{item.label}}</div>
-                <div class="stat-icon">{{item.icon}}</div>
-              </div>
-              <div class="stat-v">{{item.value}}</div>
-              <div class="stat-note">{{item.note}}</div>
-            </div>
-          </div>
-
-          <div class="insight-grid">
-            <div class="panel panel-pad">
-              <div class="section-title">
-                <div>
-                  <h3>任务健康度</h3>
-                  <p>优先看暂停任务、启用任务和最近失败实例的关系。</p>
-                </div>
-              </div>
-              <div class="stack" style="margin-top:18px">
-                <div class="mini-card">
-                  <h4>启用任务</h4>
-                  <p>{{stats.enabled}} 个任务处于启用状态，{{stats.tasks - stats.enabled}} 个未启用。适合继续补充调度频率、负责人和失败分组信息。</p>
-                </div>
-                <div class="mini-card">
-                  <h4>失败实例</h4>
-                  <p>最近实例里有 {{failedInstances}} 个失败、{{runningInstances}} 个进行中、{{successfulInstances}} 个成功。当前首页已经能体现异常压力。</p>
-                </div>
+          <div class=”insight-grid”>
+            <div class=”panel panel-pad”>
+              <div class=”section-title”><h3>任务</h3></div>
+              <div style=”margin-top:12px”>
+                <div class=”keyline”><span>启用</span><strong>{{stats.enabled}}</strong></div>
+                <div class=”keyline”><span>已暂停</span><strong>{{stats.tasks - stats.enabled}}</strong></div>
+                <div class=”keyline”><span>失败实例(24h)</span><strong>{{failedInstances}}</strong></div>
+                <div class=”keyline”><span>进行中</span><strong>{{runningInstances}}</strong></div>
+                <div class=”keyline”><span>成功(24h)</span><strong>{{successfulInstances}}</strong></div>
               </div>
             </div>
 
-            <div class="panel panel-pad">
-              <div class="section-title">
-                <div>
-                  <h3>Worker 运行态</h3>
-                  <p>不只看在线离线，还看调度资源是否集中到少数节点。</p>
-                </div>
-              </div>
-              <div style="margin-top:18px">
-                <div class="keyline">
-                  <span class="muted">在线节点</span>
-                  <strong>{{stats.workers}}</strong>
-                </div>
-                <div class="keyline">
-                  <span class="muted">离线节点</span>
-                  <strong>{{offlineWorkers}}</strong>
-                </div>
-                <div class="keyline">
-                  <span class="muted">平均负载</span>
-                  <strong>{{avgWorkerLoadLabel}}</strong>
-                </div>
-                <div class="keyline">
-                  <span class="muted">最高单节点负载</span>
-                  <strong>{{highestWorkerLoadLabel}}</strong>
-                </div>
+            <div class=”panel panel-pad”>
+              <div class=”section-title”><h3>Worker</h3></div>
+              <div style=”margin-top:12px”>
+                <div class=”keyline”><span>在线</span><strong>{{stats.workers}}</strong></div>
+                <div class=”keyline”><span>离线</span><strong>{{offlineWorkers}}</strong></div>
+                <div class=”keyline”><span>平均负载</span><strong>{{avgWorkerLoadLabel}}</strong></div>
+                <div class=”keyline”><span>最高负载</span><strong>{{highestWorkerLoadLabel}}</strong></div>
+                <div class=”keyline”><span>启动率</span><strong>{{taskEnableRate}}</strong></div>
               </div>
             </div>
 
-            <div class="panel panel-pad">
-              <div class="section-title">
-                <div>
-                  <h3>当前建议</h3>
-                  <p>先给控制台补足判断线索，而不是继续堆基础表格。</p>
-                </div>
-              </div>
-              <div class="stack" style="margin-top:18px">
-                <div class="mini-card">
-                  <h4>列表页下一步</h4>
-                  <p>建议补上搜索、筛选、空状态和分页，避免任务数上来后表格可用性下降。</p>
-                </div>
-                <div class="mini-card">
-                  <h4>调度特征表达</h4>
-                  <p>未来可以把队列积压、失败趋势和实例时间线直接放进 dashboard，提高“这是调度系统”的辨识度。</p>
-                </div>
+            <div class=”panel panel-pad”>
+              <div class=”section-title”><h3>实例</h3></div>
+              <div style=”margin-top:12px”>
+                <div class=”keyline”><span>总实例(24h)</span><strong>{{stats.instances}}</strong></div>
+                <div class=”keyline”><span>失败率</span><strong>{{instanceFailureRate}}</strong></div>
+                <div class=”keyline”><span>在线率</span><strong>{{workerOnlineRate}}</strong></div>
               </div>
             </div>
           </div>
