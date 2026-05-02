@@ -1,11 +1,14 @@
 package ai
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 
 	"github.com/example/go-ai-scheduler/internal/ai/adapter"
 	aiadvisor "github.com/example/go-ai-scheduler/internal/ai/advisor"
@@ -59,7 +62,8 @@ type trendAnalysisRequest struct {
 
 // NewRouter wires AI helper endpoints.
 // rateLimitRPM controls the LLM endpoint rate limit (0 = no limit).
-func NewRouter(llm *adapter.LLMAdapter, repos *repo.Bundle, registry *tools.Registry, store *memory.Store, rateLimitRPM int) http.Handler {
+// rdb is an optional Redis client for caching (nil = no cache).
+func NewRouter(llm *adapter.LLMAdapter, repos *repo.Bundle, registry *tools.Registry, store *memory.Store, rdb *redis.Client, rateLimitRPM int) http.Handler {
 	var rl *ratelimit.TokenBucket
 	if rateLimitRPM > 0 {
 		rl = ratelimit.NewTokenBucket(rateLimitRPM/60, rateLimitRPM)
@@ -80,13 +84,57 @@ func NewRouter(llm *adapter.LLMAdapter, repos *repo.Bundle, registry *tools.Regi
 	mux.HandleFunc("/api/v1/cron/next", cronNext)
 	mux.HandleFunc("/api/v1/log-analysis/analyze", llmGuard(func(w http.ResponseWriter, r *http.Request) { analyzeLog(w, r, llm, repos) }))
 	mux.HandleFunc("POST /api/v1/advisor/generate", llmGuard(func(w http.ResponseWriter, r *http.Request) { generateAdvice(w, r, llm, repos) }))
-	mux.HandleFunc("POST /api/v1/advisor/auto", llmGuard(func(w http.ResponseWriter, r *http.Request) { autoAdvice(w, r, llm, repos) }))
+	mux.HandleFunc("POST /api/v1/advisor/auto", llmGuard(func(w http.ResponseWriter, r *http.Request) { autoAdvice(w, r, llm, repos, rdb) }))
 	mux.HandleFunc("POST /api/v1/task/create", llmGuard(func(w http.ResponseWriter, r *http.Request) { parseTaskNatural(w, r, llm, repos) }))
 	mux.HandleFunc("POST /api/v1/task/predict-duration", llmGuard(func(w http.ResponseWriter, r *http.Request) { predictDuration(w, r, llm, repos) }))
-	mux.HandleFunc("POST /api/v1/trend/analyze", llmGuard(func(w http.ResponseWriter, r *http.Request) { analyzeTrend(w, r, llm, repos) }))
+	mux.HandleFunc("POST /api/v1/trend/analyze", llmGuard(func(w http.ResponseWriter, r *http.Request) { analyzeTrend(w, r, llm, repos, rdb) }))
 	mux.HandleFunc("POST /api/v1/chat", llmGuard(func(w http.ResponseWriter, r *http.Request) { handleChat(w, r, llm, registry, store) }))
 	mux.HandleFunc("GET /api/v1/conversations", func(w http.ResponseWriter, r *http.Request) { listConversations(w, r, store) })
 	return metrics.Instrument("ai-service", mux)
+}
+
+// cacheListTasks returns cached task list if Redis is available, falls back to DB.
+func cacheListTasks(ctx context.Context, rdb *redis.Client, taskRepo repo.TaskRepository) ([]*model.Task, error) {
+	if rdb != nil {
+		if data, err := rdb.Get(ctx, "ai:cache:tasks").Bytes(); err == nil {
+			var tasks []*model.Task
+			if json.Unmarshal(data, &tasks) == nil {
+				return tasks, nil
+			}
+		}
+	}
+	tasks, err := taskRepo.ListTasks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if rdb != nil {
+		if data, err := json.Marshal(tasks); err == nil {
+			rdb.Set(ctx, "ai:cache:tasks", data, 30*time.Second)
+		}
+	}
+	return tasks, nil
+}
+
+// cacheListWorkers returns cached worker list if Redis is available, falls back to DB.
+func cacheListWorkers(ctx context.Context, rdb *redis.Client, workerRepo repo.WorkerRepository) ([]*model.WorkerNode, error) {
+	if rdb != nil {
+		if data, err := rdb.Get(ctx, "ai:cache:workers").Bytes(); err == nil {
+			var workers []*model.WorkerNode
+			if json.Unmarshal(data, &workers) == nil {
+				return workers, nil
+			}
+		}
+	}
+	workers, err := workerRepo.ListWorkers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if rdb != nil {
+		if data, err := json.Marshal(workers); err == nil {
+			rdb.Set(ctx, "ai:cache:workers", data, 30*time.Second)
+		}
+	}
+	return workers, nil
 }
 
 func health(w http.ResponseWriter, _ *http.Request) {
@@ -231,18 +279,18 @@ func generateAdvice(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdap
 	writeJSON(w, http.StatusOK, map[string]interface{}{"advices": advices})
 }
 
-func autoAdvice(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter, repos *repo.Bundle) {
+func autoAdvice(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter, repos *repo.Bundle, rdb *redis.Client) {
 	if repos == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "repositories not available"})
 		return
 	}
 
-	workers, err := repos.Worker.ListWorkers(r.Context())
+	workers, err := cacheListWorkers(r.Context(), rdb, repos.Worker)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("list workers: %v", err)})
 		return
 	}
-	tasks, err := repos.Task.ListTasks(r.Context())
+	tasks, err := cacheListTasks(r.Context(), rdb, repos.Task)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("list tasks: %v", err)})
 		return
@@ -402,7 +450,7 @@ func predictDuration(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAda
 	writeJSON(w, http.StatusOK, result)
 }
 
-func analyzeTrend(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter, repos *repo.Bundle) {
+func analyzeTrend(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter, repos *repo.Bundle, rdb *redis.Client) {
 	var req trendAnalysisRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"})
@@ -416,12 +464,12 @@ func analyzeTrend(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapte
 		return
 	}
 
-	workers, err := repos.Worker.ListWorkers(r.Context())
+	workers, err := cacheListWorkers(r.Context(), rdb, repos.Worker)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("list workers: %v", err)})
 		return
 	}
-	tasks, err := repos.Task.ListTasks(r.Context())
+	tasks, err := cacheListTasks(r.Context(), rdb, repos.Task)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("list tasks: %v", err)})
 		return

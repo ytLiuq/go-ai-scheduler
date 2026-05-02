@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/example/go-ai-scheduler/internal/ai"
 	"github.com/example/go-ai-scheduler/internal/ai/adapter"
 	"github.com/example/go-ai-scheduler/internal/ai/memory"
@@ -53,9 +55,13 @@ func main() {
 	l.Printf("agent tools registered: %d", len(registry.Definitions()))
 
 	rateLimitRPM, _ := strconv.Atoi(os.Getenv("AI_RATE_LIMIT_RPM"))
+	var rdb *redis.Client
+	if resources.Redis != nil {
+		rdb = resources.Redis.Raw()
+	}
 	server := &http.Server{
 		Addr:    cfg.HTTPAddr,
-		Handler: ai.NewRouter(llm, resources.Repositories, registry, store, rateLimitRPM),
+		Handler: ai.NewRouter(llm, resources.Repositories, registry, store, rdb, rateLimitRPM),
 	}
 
 	// Start periodic cleanup of old AI analysis records (retain 90 days).
