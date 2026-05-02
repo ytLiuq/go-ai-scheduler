@@ -132,6 +132,22 @@ func (s *Store) UpdateTitle(ctx context.Context, convID, title string) error {
 	return err
 }
 
+// DeleteOldConversations removes conversations not updated since the given time.
+func (s *Store) DeleteOldConversations(ctx context.Context, before time.Time) (int64, error) {
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM ai_message WHERE conversation_id IN (SELECT id FROM ai_conversation WHERE updated_at < ?)`, before)
+	if err != nil {
+		return 0, fmt.Errorf("delete old messages: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx,
+		`DELETE FROM ai_conversation WHERE updated_at < ?`, before)
+	if err != nil {
+		return 0, fmt.Errorf("delete old conversations: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	return n, nil
+}
+
 func newID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)

@@ -81,6 +81,13 @@ func main() {
 			} else if n > 0 {
 				l.Printf("ai analysis cleanup: deleted %d records older than 90 days", n)
 			}
+			// Cleanup old conversations (>30 days inactive).
+			convCutoff := time.Now().Add(-30 * 24 * time.Hour)
+			if n, err := store.DeleteOldConversations(context.Background(), convCutoff); err != nil {
+				l.Printf("conversation cleanup error: %v", err)
+			} else if n > 0 {
+				l.Printf("conversation cleanup: deleted messages from %d old conversations", n)
+			}
 		}
 	}()
 
