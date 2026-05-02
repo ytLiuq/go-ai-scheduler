@@ -19,6 +19,7 @@ import (
 	"github.com/example/go-ai-scheduler/internal/model"
 	"github.com/example/go-ai-scheduler/internal/pkg/metrics"
 	"github.com/example/go-ai-scheduler/internal/repo"
+	"github.com/example/go-ai-scheduler/internal/scheduler/ratelimit"
 )
 
 type taskParseRequest struct {
@@ -57,19 +58,33 @@ type trendAnalysisRequest struct {
 }
 
 // NewRouter wires AI helper endpoints.
-func NewRouter(llm *adapter.LLMAdapter, repos *repo.Bundle, registry *tools.Registry, store *memory.Store) http.Handler {
+// rateLimitRPM controls the LLM endpoint rate limit (0 = no limit).
+func NewRouter(llm *adapter.LLMAdapter, repos *repo.Bundle, registry *tools.Registry, store *memory.Store, rateLimitRPM int) http.Handler {
+	var rl *ratelimit.TokenBucket
+	if rateLimitRPM > 0 {
+		rl = ratelimit.NewTokenBucket(rateLimitRPM/60, rateLimitRPM)
+	}
+	llmGuard := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if rl != nil && !rl.Allow() {
+				writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate limit exceeded, try again later"})
+				return
+			}
+			next(w, r)
+		}
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", health)
 	mux.HandleFunc("GET /api/v1/status", func(w http.ResponseWriter, r *http.Request) { status(w, r, llm) })
 	mux.Handle("/metrics", metrics.DefaultRegistry.Handler())
 	mux.HandleFunc("/api/v1/cron/next", cronNext)
-	mux.HandleFunc("/api/v1/log-analysis/analyze", func(w http.ResponseWriter, r *http.Request) { analyzeLog(w, r, llm, repos) })
-	mux.HandleFunc("POST /api/v1/advisor/generate", func(w http.ResponseWriter, r *http.Request) { generateAdvice(w, r, llm, repos) })
-	mux.HandleFunc("POST /api/v1/advisor/auto", func(w http.ResponseWriter, r *http.Request) { autoAdvice(w, r, llm, repos) })
-	mux.HandleFunc("POST /api/v1/task/create", func(w http.ResponseWriter, r *http.Request) { parseTaskNatural(w, r, llm, repos) })
-	mux.HandleFunc("POST /api/v1/task/predict-duration", func(w http.ResponseWriter, r *http.Request) { predictDuration(w, r, llm, repos) })
-	mux.HandleFunc("POST /api/v1/trend/analyze", func(w http.ResponseWriter, r *http.Request) { analyzeTrend(w, r, llm, repos) })
-	mux.HandleFunc("POST /api/v1/chat", func(w http.ResponseWriter, r *http.Request) { handleChat(w, r, llm, registry, store) })
+	mux.HandleFunc("/api/v1/log-analysis/analyze", llmGuard(func(w http.ResponseWriter, r *http.Request) { analyzeLog(w, r, llm, repos) }))
+	mux.HandleFunc("POST /api/v1/advisor/generate", llmGuard(func(w http.ResponseWriter, r *http.Request) { generateAdvice(w, r, llm, repos) }))
+	mux.HandleFunc("POST /api/v1/advisor/auto", llmGuard(func(w http.ResponseWriter, r *http.Request) { autoAdvice(w, r, llm, repos) }))
+	mux.HandleFunc("POST /api/v1/task/create", llmGuard(func(w http.ResponseWriter, r *http.Request) { parseTaskNatural(w, r, llm, repos) }))
+	mux.HandleFunc("POST /api/v1/task/predict-duration", llmGuard(func(w http.ResponseWriter, r *http.Request) { predictDuration(w, r, llm, repos) }))
+	mux.HandleFunc("POST /api/v1/trend/analyze", llmGuard(func(w http.ResponseWriter, r *http.Request) { analyzeTrend(w, r, llm, repos) }))
+	mux.HandleFunc("POST /api/v1/chat", llmGuard(func(w http.ResponseWriter, r *http.Request) { handleChat(w, r, llm, registry, store) }))
 	mux.HandleFunc("GET /api/v1/conversations", func(w http.ResponseWriter, r *http.Request) { listConversations(w, r, store) })
 	return metrics.Instrument("ai-service", mux)
 }

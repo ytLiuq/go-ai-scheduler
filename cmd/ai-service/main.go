@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/example/go-ai-scheduler/internal/ai"
@@ -39,9 +40,10 @@ func main() {
 
 	l.Printf("agent tools registered: %d", len(registry.Definitions()))
 
+	rateLimitRPM, _ := strconv.Atoi(os.Getenv("AI_RATE_LIMIT_RPM"))
 	server := &http.Server{
 		Addr:    cfg.HTTPAddr,
-		Handler: ai.NewRouter(llm, resources.Repositories, registry, store),
+		Handler: ai.NewRouter(llm, resources.Repositories, registry, store, rateLimitRPM),
 	}
 
 	l.Printf("starting ai-service http server on %s", cfg.HTTPAddr)
