@@ -34,7 +34,7 @@ createApp({
       retry_policy: 'fixed_interval',
       route_strategy: 'least_loaded'
     });
-    const aiLoading = reactive({ log: false, advisor: false, autoAdvisor: false, status: false, predict: false, trend: false });
+    const aiLoading = reactive({ log: false, autoAdvisor: false, status: false, predict: false, trend: false });
     const aiStatus = reactive({
       status: 'unknown',
       service: 'ai-service',
@@ -47,25 +47,14 @@ createApp({
     });
 
     const aiLog = reactive({
-      log: 'dial tcp 10.0.0.8:443: connection refused',
-      error_code: 'conn_refused',
-      task_type: 'http',
-      retry_count: 1,
+      log: '',
+      error_code: '',
+      task_type: '',
+      retry_count: 0,
       result: '',
       resultObj: null,
       instanceId: null,
       failedOptions: []
-    });
-    const aiAdvisor = reactive({
-      avg_worker_load: 0.82,
-      total_workers: 12,
-      online_workers: 10,
-      pending_instances: 950,
-      failed_last_hour: 14,
-      avg_dispatch_latency_ms: 126,
-      max_pending_config: 1000,
-      result: '',
-      resultObj: null
     });
     const aiAutoAdvisor = reactive({ result: '', resultObj: null });
     const aiPredict = reactive({ taskId: null, result: '', resultObj: null });
@@ -534,28 +523,6 @@ createApp({
       }
     }
 
-    async function runAdvisor() {
-      aiLoading.advisor = true;
-      aiAdvisor.resultObj = null;
-      try {
-        const data = await api('/api/v1/ai/advisor/generate', 'POST', {
-          avg_worker_load: aiAdvisor.avg_worker_load,
-          total_workers: aiAdvisor.total_workers,
-          online_workers: aiAdvisor.online_workers,
-          pending_instances: aiAdvisor.pending_instances,
-          failed_last_hour: aiAdvisor.failed_last_hour,
-          avg_dispatch_latency_ms: aiAdvisor.avg_dispatch_latency_ms,
-          max_pending_config: aiAdvisor.max_pending_config
-        });
-        aiAdvisor.resultObj = data;
-        aiAdvisor.result = formatResult(data);
-      } catch (e) {
-        aiAdvisor.resultObj = null;
-        aiAdvisor.result = 'Error: ' + e.message;
-      } finally {
-        aiLoading.advisor = false;
-      }
-    }
 
     async function runAutoAdvisor() {
       aiLoading.autoAdvisor = true;
@@ -796,7 +763,6 @@ createApp({
       aiStatus,
 
       aiLog,
-      aiAdvisor,
       aiAutoAdvisor,
       aiPredict,
       aiTrend,
@@ -833,7 +799,6 @@ createApp({
       runLogAnalysis,
       onSelectFailedInstance,
       loadFailedInstances,
-      runAdvisor,
       runAutoAdvisor,
       runPredictDuration,
       runTrendAnalysis,
