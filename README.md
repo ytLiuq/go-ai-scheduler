@@ -2,257 +2,177 @@
 
 `go-ai-scheduler` is a Go-native distributed task scheduling platform with AI-assisted capabilities.
 
-## Scope of v1
+## Architecture
 
-The first implementation phase focuses on the deterministic scheduling path:
-
-- task definition and persistence
-- scheduler leader election
-- worker registration and heartbeat
-- task dispatch and execution
-- instance status reporting
-- retry and timeout control
-
-AI capabilities are isolated as auxiliary services and do not participate in the core scheduling decision path.
-
-## Project Layout
-
-```text
-cmd/
-  scheduler/    scheduler service entrypoint
-  worker/       worker service entrypoint
-  api/          management API entrypoint
-  ai-service/   AI auxiliary service entrypoint
-internal/
-  scheduler/    scheduler domain modules
-  worker/       worker domain modules
-  api/          API modules
-  ai/           AI modules
-  config/       config types and loader
-  model/        domain models
-  repo/         repository abstractions
-  pkg/          shared infrastructure code
-proto/          gRPC protobuf definitions
-migrations/     database schema migrations
-deployments/    deployment manifests
+```
+                  ┌──────────┐
+                  │  Web UI  │  :8082
+                  └────┬─────┘
+                       │ HTTP (JWT)
+                  ┌────▼─────┐      ┌───────────┐
+                  │   API    │──────│ ai-service │  :8083
+                  └────┬─────┘      └─────┬─────┘
+                       │                  │ LLM API
+                  ┌────▼─────┐      (OpenAI-compatible)
+                  │ Scheduler│  :8081 / :9090 gRPC
+                  └────┬─────┘
+                  ┌────▼─────┐
+                  │  Worker  │  :8080
+                  └──────────┘
+                       │
+                  ┌────▼─────┐
+                  │   MySQL  │  :3306
+                  │   Redis  │  :6379
+                  │   etcd   │  :2379
+                  └──────────┘
 ```
 
-## Milestones
+## Features
 
-1. scaffold services, schema, and proto contracts
-2. implement worker registration and heartbeat
-3. implement task CRUD and scheduler trigger loop
-4. implement dispatch, execution, retry, and observability
-5. integrate AI log analysis
+### Core Scheduling
+- Cron-based and event-triggered task execution
+- Leader election (MySQL GET_LOCK / etcd)
+- Worker registration, heartbeat, and health checking
+- Load-aware routing (least-loaded, round-robin)
+- Sharded task execution
+- Retry with configurable policies (fixed interval, exponential backoff, error-code-based)
+- Downstream task chaining via dependencies
 
-## Current Bootstrap Status
+### AI Capabilities (ai-service, port :8083)
 
-The current local bootstrap implementation supports:
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/v1/chat` | Conversational AI agent with SSE streaming |
+| `GET /api/v1/chat/ws` | Conversational AI agent over WebSocket |
+| `POST /api/v1/log-analysis/analyze` | SRE-style log failure analysis |
+| `POST /api/v1/advisor/generate` | Scheduling recommendations (throttle/migrate/scale) |
+| `POST /api/v1/advisor/auto` | Auto-context advisor (no manual input needed) |
+| `POST /api/v1/task/create` | Natural language → task definition |
+| `POST /api/v1/task/predict-duration` | Execution time prediction from historical data |
+| `POST /api/v1/trend/analyze` | System-wide trend analysis with recommendations |
+| `POST /api/v1/cron/next` | Cron next-run computation |
+| `GET /api/v1/conversations` | List chat conversations |
+| `GET /api/v1/conversations/{id}/messages` | Load chat history |
 
-- worker registration and heartbeat over HTTP
-- task CRUD over HTTP, including deletion
-- MySQL-backed repositories for workers, tasks, and task instances
-- cron-based scheduling for `cron_expr` tasks via `next_trigger_time`
-- scheduler leader gating: local single-node mode by default, with MySQL `GET_LOCK`
-- a scheduler trigger loop that scans `next_trigger_time`, creates task instances, and assigns them to the least-loaded available worker
-- worker execution for `shell` and `http` task types
-- failure and timeout callback with centralized retry handling
-- `/metrics` endpoints on `scheduler`, `api`, `worker`, and `ai-service`
-- `ai-service` helper APIs for cron next-run calculation and log analysis
+### AI Agent Tools
+The chat agent has access to 9 tools: `query_tasks`, `query_instances`, `query_workers`, `get_task_detail`, `get_system_health`, `analyze_failure`, `create_task`, `trigger_task`, `pause_task`.
 
-## Repository Backend
+### Observability
+- Prometheus `/metrics` on all services
+- JSON structured logging (`{"ts":"...","level":"INFO","service":"...","msg":"..."}`)
+- Token usage tracking (`ai_tokens_total` counter)
+- Grafana dashboard with dispatch rate, instance status, AI requests, token usage
+- Auto-analysis of failed instances with AI
 
-The scheduler requires the MySQL repository backend for local startup and shared state.
+### Security
+- JWT authentication with RBAC (admin/operator/viewer)
+- LLM endpoint rate limiting (`AI_RATE_LIMIT_RPM` env var)
+- Multi-model fallback (`LLM_FALLBACK_ENDPOINT`)
 
-Use the following environment variables:
+## Quick Start
 
+### Prerequisites
+- Go 1.23+
+- MySQL 8.0, Redis 7, etcd (via Docker Compose)
+- LLM API key (OpenAI-compatible)
+
+### 1. Start infrastructure
 ```bash
-export REPO_BACKEND=mysql
-export MYSQL_DSN='root:root@tcp(127.0.0.1:3306)/go_ai_scheduler?parseTime=true'
+docker compose -f deployments/docker-compose/docker-compose.yml up -d
 ```
 
-Enable startup migration execution when using MySQL:
-
+### 2. Configure AI service
 ```bash
-export AUTO_MIGRATE=true
-export MIGRATION_DIR=migrations
-```
-
-Or run migrations explicitly:
-
-```bash
-REPO_BACKEND=mysql go run ./cmd/migrate
-```
-
-## Service Split
-
-- `scheduler`: internal control plane, trigger loop, retry loop, worker registration, worker heartbeat, task runtime report
-- `api`: external management and query plane, including task CRUD, worker query, and task instance query
-- `ai-service`: auxiliary HTTP service exposing `/api/v1/cron/next`, `/api/v1/log-analysis/analyze`, and other AI helper endpoints
-
-All services are expected to run with `REPO_BACKEND=mysql`. Startup scripts fail fast if MySQL is not configured.
-
-## AI Service Configuration And Startup
-
-Run the following commands from the repository root:
-
-```bash
-cd /root/workspace/go-ai-scheduler
-```
-
-A sample environment file is provided at `.env.ai-service.example`.
-Do not put real credentials into the example file and commit it.
-
-Create a local private env file first:
-
-```bash
-cd /root/workspace/go-ai-scheduler
 cp .env.ai-service.example .env.ai-service
+# Edit .env.ai-service with your LLM credentials
 ```
 
-The repository ignores `.env.ai-service`, so you can store your real key there without committing it.
-
-The `ai-service` reads its LLM configuration from these environment variables:
-
+### 3. Run full stack
 ```bash
-export LLM_ENDPOINT='https://api.openai.com/v1'
-export LLM_API_KEY='sk-...'
-export LLM_MODEL='gpt-4o'
-```
-
-Notes:
-
-- `LLM_ENDPOINT` must be the API base URL, not the full `/chat/completions` path
-- `LLM_API_KEY` is sent as a Bearer token
-- `LLM_MODEL` defaults to `gpt-4o` when unset
-
-If you want AI analysis records to persist to MySQL, also configure:
-
-```bash
-export REPO_BACKEND=mysql
-export MYSQL_DSN='root:root@tcp(127.0.0.1:3306)/go_ai_scheduler?parseTime=true'
-export AUTO_MIGRATE=false
-export MIGRATION_DIR=migrations
-export REDIS_ADDR='127.0.0.1:6379'
-```
-
-Use `go run ./cmd/migrate` to apply migrations explicitly before starting services.
-Keeping `AUTO_MIGRATE=false` avoids rerunning non-idempotent migrations on every boot.
-
-You can start both the web console API and `ai-service` with one command:
-
-```bash
-cd /root/workspace/go-ai-scheduler
-make run-console
-```
-
-This runs:
-
-- `ai-service` on `:8083`
-- `api` on `:8082`
-
-The script lives at `scripts/run-console.sh` and stops both processes together when you press `Ctrl+C`.
-
-If you only want to start `ai-service`:
-
-```bash
-cd /root/workspace/go-ai-scheduler
-source .env.ai-service
-go run ./cmd/ai-service
-```
-
-If you want the external `api` service to proxy AI requests to `ai-service`, configure:
-
-```bash
-export AI_SERVICE_URL='http://127.0.0.1:8083'
-```
-
-If you only want to start `api`:
-
-```bash
-cd /root/workspace/go-ai-scheduler
-source .env.ai-service
-go run ./cmd/api
-```
-
-To start the full local stack, including MySQL, Redis, scheduler, worker, api, and ai-service:
-
-```bash
-cd /root/workspace/go-ai-scheduler
 make run-full-stack
 ```
 
-`make run-full-stack` now does the following for you:
+Or run individual services:
+```bash
+# Console only (API + AI)
+make run-console
 
-- starts `mysql` and `redis` with Docker Compose
-- loads `.env.ai-service`
-- defaults `REPO_BACKEND` to `mysql`
-- defaults `MYSQL_DSN` to `root:root@tcp(127.0.0.1:3306)/go_ai_scheduler?parseTime=true`
-- defaults `AUTO_MIGRATE` to `true`
-- starts `scheduler`, `worker`, `api`, and `ai-service`
+# Individual services
+source .env.ai-service
+go run ./cmd/ai-service   # :8083
+go run ./cmd/api          # :8082
+go run ./cmd/scheduler    # :8081 + :9090 gRPC
+go run ./cmd/worker       # :8080
+```
 
-The only required manual setup is creating `.env.ai-service` from `.env.ai-service.example` and filling in your real LLM credentials.
-
-Current AI helper endpoints include:
-
-- `POST /api/v1/log-analysis/analyze`
-- `POST /api/v1/advisor/generate`
-- `POST /api/v1/task/create`
-- `POST /api/v1/cron/next`
-
-## Web Console
-
-The management UI is served by the `api` service at:
-
-```text
+### 4. Open web console
+```
 http://127.0.0.1:8082
 ```
+Demo logins: `admin/admin123`, `operator/operator123`, `viewer/viewer123`
 
-Demo login accounts:
+## Configuration
 
-- `admin / admin123`
-- `operator / operator123`
-- `viewer / viewer123`
+### Core environment variables
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REPO_BACKEND` | — | Set to `mysql` |
+| `MYSQL_DSN` | — | MySQL connection string |
+| `REDIS_ADDR` | — | Redis address (optional, enables caching) |
+| `ETCD_ENDPOINTS` | — | etcd cluster (for leader election) |
 
-Current console features:
+### AI service
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LLM_ENDPOINT` | — | OpenAI-compatible API base URL |
+| `LLM_API_KEY` | — | API key (Bearer token) |
+| `LLM_MODEL` | `gpt-4o` | Model name |
+| `LLM_FALLBACK_ENDPOINT` | — | Fallback endpoint |
+| `LLM_FALLBACK_API_KEY` | — | Fallback API key |
+| `LLM_FALLBACK_MODEL` | `gpt-4o` | Fallback model |
+| `AI_RATE_LIMIT_RPM` | `0` (no limit) | LLM request rate limit |
+| `AI_SERVICE_URL` | `http://127.0.0.1:8083` | API → ai-service proxy target |
+| `LOG_LEVEL` | `info` | debug/info/warn/error |
 
-- dashboard summary for tasks, workers, and recent instances
-- task list, create, edit, pause, resume, and manual trigger
-- worker list and load view
-- task instance list
-- AI tools for log analysis, scheduling advice, and task creation
+## Deployment
 
-The AI tools page uses the proxied API endpoints and renders structured results in the console instead of raw JSON.
-
-## Internal Transport
-
-The external management plane is HTTP only.
-
-The internal `scheduler <-> worker` control plane supports both:
-
-- `http`
-- `grpc`
-
-Switch worker-side internal transport with:
-
+### Docker
 ```bash
-export INTERNAL_PROTOCOL=http
+docker build -f Dockerfile.ai-service -t go-ai-scheduler .
+docker build -f Dockerfile.api -t go-ai-scheduler .
+docker build -f Dockerfile.scheduler -t go-ai-scheduler .
+docker build -f Dockerfile.worker -t go-ai-scheduler .
 ```
 
-or:
-
+### Kubernetes
 ```bash
-export INTERNAL_PROTOCOL=grpc
-export SCHEDULER_GRPC_ADDR=127.0.0.1:9090
+kubectl apply -f deployments/k8s/
+```
+Manifests include HPA: api (2-8), ai-service (2-6), scheduler (1-3). LLM credentials sourced from `ai-service-llm` Secret.
+
+### Docker Compose (full stack)
+```bash
+docker compose -f deployments/docker-compose/docker-compose.yml up -d
+```
+Includes MySQL, Redis, etcd, api, ai-service, scheduler, and worker.
+
+## Project Layout
+```
+cmd/            Service entrypoints (api, scheduler, worker, ai-service, migrate)
+internal/
+  ai/           AI modules (adapter, agent, advisor, loganalysis, memory,
+                predictduration, prompts, stream, taskparser, tools, trend)
+  api/          Management API (handlers, middleware, services)
+  scheduler/    Scheduling engine (trigger, retry, dispatch, health, leader)
+  worker/       Task executor (executor, reporter, heartbeat, sandbox)
+  config/       Configuration loader
+  model/        Domain models
+  repo/         Repository interfaces + MySQL/test-store implementations
+  pkg/          Shared utilities (metrics, logger, cronexpr, xmysql, xredis)
+proto/          gRPC definitions + generated code
+migrations/     MySQL schema migrations
+deployments/    Docker Compose, Kubernetes manifests, Grafana dashboard
 ```
 
-When `INTERNAL_PROTOCOL=grpc`, the worker will:
-
-- register through scheduler gRPC
-- send heartbeat through scheduler gRPC
-- report execution result through scheduler gRPC
-- receive task dispatch through worker gRPC
-
-## Observability
-
-Each service exposes a plain-text Prometheus-style metrics endpoint at `/metrics`.
+## CI/CD
+GitHub Actions workflow (`.github/workflows/ci.yml`): MySQL + Redis services, migrations, `go test ./...`, `go vet ./...`, `go build ./cmd/...`.
