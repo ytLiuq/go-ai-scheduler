@@ -1270,7 +1270,7 @@ tbody tr:hover{
             <button :class="{active: tab==='tasks'}" @click="tab='tasks';loadTasks()">任务</button>
             <button :class="{active: tab==='workers'}" @click="tab='workers';loadWorkers()">Worker</button>
             <button :class="{active: tab==='instances'}" @click="tab='instances';loadInstances()">实例</button>
-            <button :class="{active: tab==='ai'}" @click="tab='ai';loadAIStatus()">AI 工具</button>
+            <button :class="{active: tab==='ai'}" @click="tab='ai';loadAIStatus();loadFailedInstances()">AI 工具</button>
             <button :class="{active: tab==='chat'}" @click="tab='chat';loadConversations()">AI 对话</button>
           </div>
           <div class="nav-hint">管理台模式：数据驱动 + 操作优先</div>
@@ -1654,44 +1654,19 @@ tbody tr:hover{
             <div class="panel panel-pad ai-card">
               <div class="ai-head">
                 <div>
-                  <h3>Cron Parser</h3>
-                  <p>把自然语言转换为 cron，结果区直接展示表达式、解释和置信度。</p>
-                </div>
-                <div class="status-note" v-if="aiLoading.cron">正在解析...</div>
-              </div>
-              <div class="form-group">
-                <label>Natural Language</label>
-                <textarea class="textarea" v-model="aiCron.input" placeholder="every weekday at 9am"></textarea>
-              </div>
-              <div class="btn-row">
-                <button class="btn btn-primary" @click="runCronParse" :disabled="aiLoading.cron">解析</button>
-              </div>
-              <div v-if="aiCron.resultObj">
-                <div class="ai-grid">
-                  <div class="ai-stat">
-                    <div class="k">Cron</div>
-                    <div class="v">{{aiCron.resultObj.cron_expression || '--'}}</div>
-                  </div>
-                  <div class="ai-stat">
-                    <div class="k">Confidence</div>
-                    <div class="v">{{formatPercent(aiCron.resultObj.confidence)}}</div>
-                  </div>
-                </div>
-                <div class="ai-item" style="margin-top:12px">
-                  <h4>解释</h4>
-                  <p>{{aiCron.resultObj.explanation || '--'}}</p>
-                </div>
-              </div>
-              <div class="result-box" v-else>{{aiCron.result || '尚未生成结果。'}}</div>
-            </div>
-
-            <div class="panel panel-pad ai-card">
-              <div class="ai-head">
-                <div>
                   <h3>Log Analysis</h3>
                   <p>输入错误日志和运行上下文，快速得到错误等级、根因与修复建议。</p>
                 </div>
                 <div class="status-note" v-if="aiLoading.log">正在分析...</div>
+              </div>
+              <div class="form-group">
+                <label>从失败实例自动填充 (可选)</label>
+                <select class="select" v-model="aiLog.instanceId" @change="onSelectFailedInstance">
+                  <option :value="null">-- 手动输入 --</option>
+                  <option v-for="inst in aiLog.failedOptions" :key="inst.id" :value="inst.id">
+                    #{{inst.id}} Task {{inst.task_id}} — {{inst.error_code || '--'}} ({{formatTime(inst.trigger_time)}})
+                  </option>
+                </select>
               </div>
               <div class="form-group">
                 <label>Error Log</label>
@@ -1787,7 +1762,27 @@ tbody tr:hover{
               </div>
             </div>
             <div class="btn-row">
-              <button class="btn btn-primary" @click="runAdvisor" :disabled="aiLoading.advisor">生成建议</button>
+              <button class="btn btn-primary" @click="runAutoAdvisor" :disabled="aiLoading.autoAdvisor">{{aiLoading.autoAdvisor ? '自动分析中...' : '自动生成 (从系统数据)'}}</button>
+              <button class="btn btn-secondary" @click="runAdvisor" :disabled="aiLoading.advisor">手动生成</button>
+            </div>
+            <div v-if="aiAutoAdvisor.resultObj && aiAutoAdvisor.resultObj.advices && aiAutoAdvisor.resultObj.advices.length" style="margin-bottom:14px">
+              <div class="ai-list" style="margin-top:14px">
+                <div class="ai-item" v-for="(advice, idx) in aiAutoAdvisor.resultObj.advices" :key="idx">
+                  <h4>{{advice.title || advice.type || 'Advice'}} <span style="color:var(--muted);font-weight:normal;font-size:12px">(auto)</span></h4>
+                  <p>{{advice.description || '--'}}</p>
+                  <div class="ai-grid" style="margin-top:12px">
+                    <div class="ai-stat"><div class="k">Type</div><div class="v">{{advice.type || '--'}}</div></div>
+                    <div class="ai-stat"><div class="k">Confidence</div><div class="v">{{formatPercent(advice.confidence)}}</div></div>
+                    <div class="ai-stat"><div class="k">Auto Apply</div><div class="v">{{advice.auto_apply ? 'Yes' : 'No'}}</div></div>
+                  </div>
+                </div>
+              </div>
+              <div v-if="aiAutoAdvisor.resultObj.context" class="ai-grid" style="margin-top:12px">
+                <div class="ai-stat"><div class="k">Avg Load</div><div class="v">{{formatPercent(aiAutoAdvisor.resultObj.context.avg_worker_load)}}</div></div>
+                <div class="ai-stat"><div class="k">Online</div><div class="v">{{aiAutoAdvisor.resultObj.context.online_workers}}/{{aiAutoAdvisor.resultObj.context.total_workers}}</div></div>
+                <div class="ai-stat"><div class="k">Pending</div><div class="v">{{aiAutoAdvisor.resultObj.context.pending_instances}}</div></div>
+                <div class="ai-stat"><div class="k">Failed/h</div><div class="v">{{aiAutoAdvisor.resultObj.context.failed_last_hour}}</div></div>
+              </div>
             </div>
             <div v-if="aiAdvisor.resultObj && aiAdvisor.resultObj.advices && aiAdvisor.resultObj.advices.length">
               <div class="ai-list">
@@ -1812,6 +1807,106 @@ tbody tr:hover{
               </div>
             </div>
             <div class="result-box" v-else>{{aiAdvisor.result || '尚未生成结果。'}}</div>
+          </div>
+
+          <div class="split" style="margin-top:20px">
+            <div class="panel panel-pad ai-card">
+              <div class="ai-head">
+                <div>
+                  <h3>Task Duration Predictor</h3>
+                  <p>根据历史执行数据预测任务持续时长，给出趋势分析和置信度评估。</p>
+                </div>
+                <div class="status-note" v-if="aiLoading.predict">预测中...</div>
+              </div>
+              <div class="form-group">
+                <label>选择任务</label>
+                <select class="select" v-model="aiPredict.taskId">
+                  <option :value="null">-- 选择任务 --</option>
+                  <option v-for="t in tasks" :key="t.id" :value="t.id">#{{t.id}} {{t.name}} ({{t.type}})</option>
+                </select>
+              </div>
+              <div class="btn-row" style="margin-top:12px">
+                <button class="btn btn-primary" @click="runPredictDuration" :disabled="aiLoading.predict || !aiPredict.taskId">预测时长</button>
+              </div>
+              <div v-if="aiPredict.resultObj">
+                <div class="ai-grid" style="margin-top:14px">
+                  <div class="ai-stat">
+                    <div class="k">Predicted</div>
+                    <div class="v">{{(aiPredict.resultObj.predicted_duration_seconds || 0).toFixed(1)}}s</div>
+                  </div>
+                  <div class="ai-stat">
+                    <div class="k">Confidence</div>
+                    <div class="v">{{formatPercent(aiPredict.resultObj.confidence)}}</div>
+                  </div>
+                  <div class="ai-stat">
+                    <div class="k">Trend</div>
+                    <div class="v">{{aiPredict.resultObj.trend || '--'}}</div>
+                  </div>
+                </div>
+                <div class="ai-item" style="margin-top:12px">
+                  <h4>Explanation</h4>
+                  <p>{{aiPredict.resultObj.explanation || '--'}}</p>
+                </div>
+                <div v-if="aiPredict.resultObj.historical_stats && aiPredict.resultObj.historical_stats.count" class="ai-list" style="margin-top:12px">
+                  <h4 style="font-size:14px;color:var(--title);margin-bottom:8px">Historical ({{aiPredict.resultObj.historical_stats.count}} samples)</h4>
+                  <div class="ai-grid">
+                    <div class="ai-stat"><div class="k">Avg</div><div class="v">{{(aiPredict.resultObj.historical_stats.avg_duration || 0).toFixed(1)}}s</div></div>
+                    <div class="ai-stat"><div class="k">Min</div><div class="v">{{(aiPredict.resultObj.historical_stats.min_duration || 0).toFixed(1)}}s</div></div>
+                    <div class="ai-stat"><div class="k">Max</div><div class="v">{{(aiPredict.resultObj.historical_stats.max_duration || 0).toFixed(1)}}s</div></div>
+                    <div class="ai-stat"><div class="k">P50</div><div class="v">{{(aiPredict.resultObj.historical_stats.p50_duration || 0).toFixed(1)}}s</div></div>
+                    <div class="ai-stat"><div class="k">P95</div><div class="v">{{(aiPredict.resultObj.historical_stats.p95_duration || 0).toFixed(1)}}s</div></div>
+                  </div>
+                </div>
+              </div>
+              <div class="result-box" v-else>{{aiPredict.result || '尚未生成结果。'}}</div>
+            </div>
+
+            <div class="panel panel-pad ai-card">
+              <div class="ai-head">
+                <div>
+                  <h3>Trend Analysis</h3>
+                  <p>综合分析 Worker 负载、任务量和失败趋势，生成系统健康度评估。</p>
+                </div>
+                <div class="status-note" v-if="aiLoading.trend">分析中...</div>
+              </div>
+              <div class="form-group">
+                <label>时间窗口 (小时)</label>
+                <input class="input" type="number" v-model.number="aiTrend.timeWindowHours" placeholder="24">
+                <div class="form-help" style="font-size:12px;color:var(--muted)">默认 24 小时，0 表示全部数据。</div>
+              </div>
+              <div class="btn-row" style="margin-top:12px">
+                <button class="btn btn-primary" @click="runTrendAnalysis" :disabled="aiLoading.trend">开始分析</button>
+              </div>
+              <div v-if="aiTrend.resultObj">
+                <div class="ai-item" style="margin-top:14px">
+                  <h4>Overall Assessment</h4>
+                  <p>{{aiTrend.resultObj.overall_assessment || '--'}}</p>
+                </div>
+                <div v-if="aiTrend.resultObj.trends && aiTrend.resultObj.trends.length" class="ai-list" style="margin-top:12px">
+                  <h4 style="font-size:14px;color:var(--title);margin-bottom:8px">Trends</h4>
+                  <div class="ai-item" v-for="(trend, idx) in aiTrend.resultObj.trends" :key="idx">
+                    <h4>{{trend.metric}}
+                      <span :class="'badge '+(trend.direction==='increasing'?'badge-error':trend.direction==='decreasing'?'badge-success':'badge-info')">
+                        {{trend.direction}}
+                      </span>
+                    </h4>
+                    <p>{{trend.detail || '--'}}</p>
+                  </div>
+                </div>
+                <div v-if="aiTrend.resultObj.recommendations && aiTrend.resultObj.recommendations.length" class="ai-list" style="margin-top:12px">
+                  <h4 style="font-size:14px;color:var(--title);margin-bottom:8px">Recommendations</h4>
+                  <div class="ai-item" v-for="(rec, idx) in aiTrend.resultObj.recommendations" :key="idx">
+                    <h4>{{rec.title}}
+                      <span :class="'badge '+(rec.urgency==='high'?'badge-error':rec.urgency==='medium'?'badge-warning':'badge-info')">
+                        {{rec.urgency}}
+                      </span>
+                    </h4>
+                    <p>{{rec.description || '--'}}</p>
+                  </div>
+                </div>
+              </div>
+              <div class="result-box" v-else>{{aiTrend.result || '尚未生成结果。'}}</div>
+            </div>
           </div>
         </template>
 

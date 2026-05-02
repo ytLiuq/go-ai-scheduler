@@ -30,7 +30,7 @@ createApp({
       retry_policy: 'fixed_interval',
       route_strategy: 'least_loaded'
     });
-    const aiLoading = reactive({ cron: false, log: false, advisor: false, status: false });
+    const aiLoading = reactive({ log: false, advisor: false, autoAdvisor: false, status: false, predict: false, trend: false });
     const aiStatus = reactive({
       status: 'unknown',
       service: 'ai-service',
@@ -41,14 +41,16 @@ createApp({
       server_time: '',
       error: ''
     });
-    const aiCron = reactive({ input: 'every 5 minutes', result: '', resultObj: null });
+
     const aiLog = reactive({
       log: 'dial tcp 10.0.0.8:443: connection refused',
       error_code: 'conn_refused',
       task_type: 'http',
       retry_count: 1,
       result: '',
-      resultObj: null
+      resultObj: null,
+      instanceId: null,
+      failedOptions: []
     });
     const aiAdvisor = reactive({
       avg_worker_load: 0.82,
@@ -61,6 +63,9 @@ createApp({
       result: '',
       resultObj: null
     });
+    const aiAutoAdvisor = reactive({ result: '', resultObj: null });
+    const aiPredict = reactive({ taskId: null, result: '', resultObj: null });
+    const aiTrend = reactive({ timeWindowHours: 24, result: '', resultObj: null });
 
     // --- Chat state ---
     const conversations = ref([]);
@@ -435,31 +440,18 @@ createApp({
       return ratioLabel(worker.current_load || 0, worker.max_concurrency || 0);
     }
 
-    async function runCronParse() {
-      aiLoading.cron = true;
-      aiCron.resultObj = null;
-      try {
-        const data = await api('/api/v1/ai/cron/parse', 'POST', { input: aiCron.input });
-        aiCron.resultObj = data;
-        aiCron.result = formatResult(data);
-      } catch (e) {
-        aiCron.resultObj = null;
-        aiCron.result = 'Error: ' + e.message;
-      } finally {
-        aiLoading.cron = false;
-      }
-    }
-
     async function runLogAnalysis() {
       aiLoading.log = true;
       aiLog.resultObj = null;
       try {
-        const data = await api('/api/v1/ai/log-analysis/analyze', 'POST', {
+        const body = {
           log: aiLog.log,
           error_code: aiLog.error_code,
           task_type: aiLog.task_type,
           retry_count: aiLog.retry_count
-        });
+        };
+        if (aiLog.instanceId) body.instance_id = aiLog.instanceId;
+        const data = await api('/api/v1/ai/log-analysis/analyze', 'POST', body);
         aiLog.resultObj = data;
         aiLog.result = formatResult(data);
       } catch (e) {
@@ -467,6 +459,26 @@ createApp({
         aiLog.result = 'Error: ' + e.message;
       } finally {
         aiLoading.log = false;
+      }
+    }
+
+    function onSelectFailedInstance() {
+      if (!aiLog.instanceId) return;
+      const inst = aiLog.failedOptions.find(i => i.id === aiLog.instanceId);
+      if (inst) {
+        aiLog.log = inst.error_message || aiLog.log;
+        aiLog.error_code = inst.error_code || '';
+        aiLog.retry_count = inst.retry_count || 0;
+      }
+    }
+
+    async function loadFailedInstances() {
+      try {
+        const data = await api('/api/v1/task-instances?status=failed');
+        aiLog.failedOptions = (data || []).map(normalizeInstance).slice(0, 20);
+      } catch (e) {
+        console.error('load failed instances:', e);
+        aiLog.failedOptions = [];
       }
     }
 
@@ -490,6 +502,54 @@ createApp({
         aiAdvisor.result = 'Error: ' + e.message;
       } finally {
         aiLoading.advisor = false;
+      }
+    }
+
+    async function runAutoAdvisor() {
+      aiLoading.autoAdvisor = true;
+      aiAutoAdvisor.resultObj = null;
+      try {
+        const data = await api('/api/v1/ai/advisor/auto', 'POST', {});
+        aiAutoAdvisor.resultObj = data;
+        aiAutoAdvisor.result = formatResult(data);
+      } catch (e) {
+        aiAutoAdvisor.resultObj = null;
+        aiAutoAdvisor.result = 'Error: ' + e.message;
+      } finally {
+        aiLoading.autoAdvisor = false;
+      }
+    }
+
+    async function runPredictDuration() {
+      if (!aiPredict.taskId) return;
+      aiLoading.predict = true;
+      aiPredict.resultObj = null;
+      try {
+        const data = await api('/api/v1/ai/task/predict-duration', 'POST', { task_id: aiPredict.taskId });
+        aiPredict.resultObj = data;
+        aiPredict.result = formatResult(data);
+      } catch (e) {
+        aiPredict.resultObj = null;
+        aiPredict.result = 'Error: ' + e.message;
+      } finally {
+        aiLoading.predict = false;
+      }
+    }
+
+    async function runTrendAnalysis() {
+      aiLoading.trend = true;
+      aiTrend.resultObj = null;
+      try {
+        const data = await api('/api/v1/ai/trend/analyze', 'POST', {
+          time_window_hours: aiTrend.timeWindowHours || 24
+        });
+        aiTrend.resultObj = data;
+        aiTrend.result = formatResult(data);
+      } catch (e) {
+        aiTrend.resultObj = null;
+        aiTrend.result = 'Error: ' + e.message;
+      } finally {
+        aiLoading.trend = false;
       }
     }
 
@@ -703,7 +763,7 @@ createApp({
 
     onMounted(() => {
       if (token.value) {
-        Promise.all([loadTasks(), loadWorkers(), loadInstances(), loadAIStatus()]);
+        Promise.all([loadTasks(), loadWorkers(), loadInstances(), loadAIStatus(), loadFailedInstances()]);
       }
     });
 
@@ -723,9 +783,12 @@ createApp({
       editingTask,
       aiLoading,
       aiStatus,
-      aiCron,
+
       aiLog,
       aiAdvisor,
+      aiAutoAdvisor,
+      aiPredict,
+      aiTrend,
       failedInstances,
       runningInstances,
       successfulInstances,
@@ -750,9 +813,14 @@ createApp({
       toggleTask,
       triggerTask,
       deleteTask,
-      runCronParse,
+
       runLogAnalysis,
+      onSelectFailedInstance,
+      loadFailedInstances,
       runAdvisor,
+      runAutoAdvisor,
+      runPredictDuration,
+      runTrendAnalysis,
       renderMarkdown,
       conversations,
       currentConversationId,
