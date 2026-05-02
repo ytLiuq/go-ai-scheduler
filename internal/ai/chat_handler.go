@@ -35,11 +35,22 @@ func handleChat(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter,
 		return
 	}
 
-	// Create SSE writer.
-	sw, err := stream.NewWriter(w)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming not supported"})
-		return
+	// Create event writer: WebSocket if client requests upgrade, SSE otherwise.
+	var sw stream.EventWriter
+	if strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
+		ws, err := stream.NewWSWriter(w, r)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "websocket upgrade failed: " + err.Error()})
+			return
+		}
+		sw = ws
+	} else {
+		sse, err := stream.NewSSEWriter(w)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming not supported"})
+			return
+		}
+		sw = sse
 	}
 
 	// Load or create conversation.
@@ -102,6 +113,62 @@ func listConversations(w http.ResponseWriter, r *http.Request, store *memory.Sto
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"conversations": convs})
+}
+
+// handleChatWS handles WebSocket chat connections.
+func handleChatWS(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter, registry *tools.Registry, store *memory.Store) {
+	ws, err := stream.NewWSWriter(w, r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "websocket upgrade failed: " + err.Error()})
+		return
+	}
+
+	var req chatRequest
+	if err := ws.ReadJSON(&req); err != nil {
+		ws.Error(fmt.Errorf("invalid message: %w", err))
+		return
+	}
+	if strings.TrimSpace(req.Message) == "" {
+		ws.Error(fmt.Errorf("message is required"))
+		return
+	}
+
+	convID := req.ConversationID
+	var history []adapter.Message
+	if convID != "" && store != nil {
+		msgs, _ := store.GetHistory(r.Context(), convID, 50)
+		for _, m := range msgs {
+			history = append(history, adapter.Message{Role: m.Role, Content: m.Content})
+		}
+	}
+	if convID == "" && store != nil {
+		conv, err := store.CreateConversation(r.Context(), firstLine(req.Message, 50))
+		if err != nil {
+			log.Printf("create conversation failed: %v", err)
+		} else {
+			convID = conv.ID
+		}
+	}
+	if convID != "" && store != nil {
+		_ = store.AddMessage(r.Context(), convID, "user", req.Message, "")
+	}
+
+	result, runErr := agent.Run(r.Context(), llm, registry, agent.SystemPrompt, history, req.Message, ws)
+	if runErr != nil {
+		log.Printf("agent run error: %v", runErr)
+		return
+	}
+
+	if convID != "" && store != nil && result.Content != "" {
+		toolCallsJSON := "null"
+		if len(result.ToolCalls) > 0 {
+			toolCallsJSON = fmt.Sprintf("%q", result.ToolCalls)
+		}
+		_ = store.AddMessage(r.Context(), convID, "assistant", result.Content, toolCallsJSON)
+	}
+	if convID != "" {
+		ws.Event("conversation_id", map[string]string{"id": convID})
+	}
 }
 
 func firstLine(s string, maxLen int) string {

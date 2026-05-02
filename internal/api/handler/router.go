@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -58,6 +60,7 @@ func NewAPIRouter(authHandler *AuthHandler, workerHandler *WorkerHandler, taskHa
 	mux.HandleFunc("POST /api/v1/ai/trend/analyze", requireAuth("viewer", proxyAIHandler("trend/analyze")))
 	mux.HandleFunc("POST /api/v1/ai/task/create", requireAuth("operator", proxyAIHandler("task/create")))
 	mux.HandleFunc("POST /api/v1/ai/chat", requireAuth("viewer", proxyAIHandler("chat")))
+	mux.HandleFunc("GET /api/v1/ai/chat/ws", requireAuth("viewer", proxyWSHandler("chat/ws")))
 	mux.HandleFunc("GET /api/v1/ai/conversations", requireAuth("viewer", proxyAIHandler(http.MethodGet, "conversations")))
 
 	// Serve web console static files.
@@ -157,5 +160,55 @@ func proxyAIHandler(methodOrPath string, maybePath ...string) http.HandlerFunc {
 		}
 		w.WriteHeader(resp.StatusCode)
 		_, _ = io.Copy(w, resp.Body)
+	}
+}
+
+// proxyWSHandler tunnels WebSocket connections to the AI service.
+func proxyWSHandler(path string) http.HandlerFunc {
+	aiServiceURL := os.Getenv("AI_SERVICE_URL")
+	if aiServiceURL == "" {
+		aiServiceURL = "http://127.0.0.1:8083"
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		backendHost := strings.TrimPrefix(strings.TrimPrefix(aiServiceURL, "http://"), "https://")
+		backendConn, err := net.Dial("tcp", backendHost)
+		if err != nil {
+			http.Error(w, "backend unreachable", http.StatusBadGateway)
+			return
+		}
+		defer backendConn.Close()
+
+		reqStr := fmt.Sprintf("GET /api/v1/%s HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n",
+			path, backendHost, r.Header.Get("Sec-WebSocket-Key"))
+		if _, err := backendConn.Write([]byte(reqStr)); err != nil {
+			http.Error(w, "backend write failed", http.StatusBadGateway)
+			return
+		}
+
+		buf := make([]byte, 4096)
+		n, err := backendConn.Read(buf)
+		if err != nil || !strings.Contains(string(buf[:n]), "101") {
+			http.Error(w, "backend upgrade failed", http.StatusBadGateway)
+			return
+		}
+
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			http.Error(w, "hijack not supported", http.StatusInternalServerError)
+			return
+		}
+		clientConn, _, err := hj.Hijack()
+		if err != nil {
+			return
+		}
+		defer clientConn.Close()
+
+		clientConn.Write(buf[:n])
+
+		done := make(chan struct{}, 2)
+		go func() { io.Copy(backendConn, clientConn); done <- struct{}{} }()
+		go func() { io.Copy(clientConn, backendConn); done <- struct{}{} }()
+		<-done
 	}
 }

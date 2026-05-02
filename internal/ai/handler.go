@@ -89,6 +89,7 @@ func NewRouter(llm *adapter.LLMAdapter, repos *repo.Bundle, registry *tools.Regi
 	mux.HandleFunc("POST /api/v1/task/predict-duration", llmGuard(func(w http.ResponseWriter, r *http.Request) { predictDuration(w, r, llm, repos) }))
 	mux.HandleFunc("POST /api/v1/trend/analyze", llmGuard(func(w http.ResponseWriter, r *http.Request) { analyzeTrend(w, r, llm, repos, rdb) }))
 	mux.HandleFunc("POST /api/v1/chat", llmGuard(func(w http.ResponseWriter, r *http.Request) { handleChat(w, r, llm, registry, store) }))
+	mux.HandleFunc("GET /api/v1/chat/ws", func(w http.ResponseWriter, r *http.Request) { handleChatWS(w, r, llm, registry, store) })
 	mux.HandleFunc("GET /api/v1/conversations", func(w http.ResponseWriter, r *http.Request) { listConversations(w, r, store) })
 	return metrics.Instrument("ai-service", mux)
 }

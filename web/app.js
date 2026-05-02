@@ -617,93 +617,33 @@ createApp({
       chatStreamContent.value = '';
       chatToolCalls.value = [];
 
-      // Add user message.
       chatMessages.value.push({ role: 'user', content: msg });
       scrollChatToBottom();
 
-      const tokenVal = token.value;
-      const headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'text/event-stream'
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = proto + '//' + location.host + '/api/v1/ai/chat/ws';
+
+      let assistantContent = '';
+      const toolCallNames = [];
+
+      const ws = new WebSocket(wsUrl);
+      let wsOpened = false;
+
+      ws.onopen = () => {
+        wsOpened = true;
+        ws.send(JSON.stringify({
+          message: msg,
+          conversation_id: currentConversationId.value || ''
+        }));
       };
-      if (tokenVal) headers['Authorization'] = 'Bearer ' + tokenVal;
 
-      try {
-        const resp = await fetch('/api/v1/ai/chat', {
-          method: 'POST',
-          headers: headers,
-          body: JSON.stringify({
-            message: msg,
-            conversation_id: currentConversationId.value || ''
-          })
-        });
+      ws.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          const event = msg.event;
+          const payload = msg.data;
+          if (!event) return;
 
-        if (!resp.ok) {
-          const err = await resp.json().catch(() => ({ error: resp.statusText }));
-          throw new Error(err.error || resp.statusText);
-        }
-
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let assistantContent = '';
-        const toolCallNames = [];
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-
-          // Parse SSE events from buffer.
-          const lines = buffer.split('\n');
-          buffer = '';
-          let currentEvent = '';
-          let currentData = '';
-
-          for (const line of lines) {
-            if (line.startsWith('event: ')) {
-              currentEvent = line.slice(7).trim();
-            } else if (line.startsWith('data: ')) {
-              currentData = line.slice(6).trim();
-            } else if (line === '') {
-              // End of event — process it.
-              if (currentEvent && currentData) {
-                try {
-                  const payload = JSON.parse(currentData);
-                  processSSEEvent(currentEvent, payload);
-                } catch(e) { /* skip malformed */ }
-              }
-              currentEvent = '';
-              currentData = '';
-            } else {
-              // Partial line — put back in buffer.
-              buffer += line;
-            }
-          }
-        }
-
-        // Process any remaining event.
-        if (currentEvent && currentData) {
-          try {
-            const payload = JSON.parse(currentData);
-            processSSEEvent(currentEvent, payload);
-          } catch(e) { /* skip */ }
-        }
-
-        // Save assistant message.
-        if (assistantContent || toolCallNames.length) {
-          chatMessages.value.push({
-            role: 'assistant',
-            content: assistantContent,
-            toolCalls: chatToolCalls.value.map(tc => ({
-              name: tc.name,
-              result: tc.result,
-              resultStr: tc.result ? JSON.stringify(tc.result, null, 2) : ''
-            }))
-          });
-        }
-
-        function processSSEEvent(event, payload) {
           switch (event) {
             case 'text':
               assistantContent += payload.delta || '';
@@ -714,9 +654,7 @@ createApp({
               chatToolCalls.value.push({
                 name: payload.name,
                 args: payload.args,
-                done: false,
-                result: null,
-                resultStr: ''
+                done: false, result: null, resultStr: ''
               });
               scrollChatToBottom();
               break;
@@ -734,6 +672,7 @@ createApp({
               chatStreaming.value = false;
               chatStreamContent.value = '';
               chatToolCalls.value = [];
+              ws.close();
               break;
             case 'conversation_id':
               if (payload.id && !currentConversationId.value) {
@@ -744,18 +683,36 @@ createApp({
             case 'error':
               chatError.value = payload.message || 'Unknown error';
               chatStreaming.value = false;
+              ws.close();
               break;
           }
+        } catch(ex) { /* skip malformed */ }
+      };
+
+      ws.onerror = () => {
+        if (!wsOpened) {
+          chatError.value = 'WebSocket connection failed, falling back to SSE';
+          chatStreaming.value = false;
         }
-      } catch (e) {
-        chatError.value = e.message;
-      } finally {
+      };
+
+      ws.onclose = () => {
         chatStreaming.value = false;
         chatStreamContent.value = '';
-        chatToolCalls.value = [];
-      }
+        if (assistantContent || toolCallNames.length) {
+          chatMessages.value.push({
+            role: 'assistant',
+            content: assistantContent,
+            toolCalls: chatToolCalls.value.map(tc => ({
+              name: tc.name,
+              result: tc.result,
+              resultStr: tc.result ? JSON.stringify(tc.result, null, 2) : ''
+            }))
+          });
+        }
+      };
+      scrollChatToBottom();
     }
-
     function sendQuickMsg(msg) {
       chatInput.value = msg;
       sendChatMessage();

@@ -23,7 +23,7 @@ type RunResult struct {
 
 // Run executes a single user message through the agent loop and streams
 // the response through the SSE writer. It also returns the final text for storage.
-func Run(ctx context.Context, llm *adapter.LLMAdapter, registry *tools.Registry, systemPrompt string, history []adapter.Message, userMessage string, sw *stream.Writer) (*RunResult, error) {
+func Run(ctx context.Context, llm *adapter.LLMAdapter, registry *tools.Registry, systemPrompt string, history []adapter.Message, userMessage string, sw stream.EventWriter) (*RunResult, error) {
 	if llm == nil || !llm.Enabled() {
 		sw.Error(fmt.Errorf("LLM not configured"))
 		return nil, fmt.Errorf("LLM not configured")
