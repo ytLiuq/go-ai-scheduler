@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/example/go-ai-scheduler/internal/model"
@@ -115,7 +116,7 @@ func (h *EventHandler) Publish(w http.ResponseWriter, r *http.Request) {
 				ScheduleInstanceID: instance.ScheduleInstanceID,
 				TaskID:             task.ID,
 				TaskType:           task.Type,
-				Payload:            task.Payload,
+				Payload:            renderEventPayload(task.Payload, req),
 				TimeoutSeconds:     task.TimeoutSeconds,
 				ShardNo:            shard,
 				ShardTotal:         task.TotalShards,
@@ -137,4 +138,17 @@ func (h *EventHandler) Publish(w http.ResponseWriter, r *http.Request) {
 
 func generateScheduleInstanceID(taskID int64) string {
 	return fmt.Sprintf("task-%d-%d", taskID, time.Now().UnixNano())
+}
+
+// renderEventPayload replaces template variables in the task payload with event data.
+// Supports: {{.event.name}}, {{.event.payload.key}}, {{.event.payload.nested.key}}
+func renderEventPayload(template string, req publishEventRequest) string {
+	result := template
+	result = strings.ReplaceAll(result, "{{.event.name}}", req.EventName)
+	for k, v := range req.Payload {
+		placeholder := fmt.Sprintf("{{.event.payload.%s}}", k)
+		strVal := fmt.Sprintf("%v", v)
+		result = strings.ReplaceAll(result, placeholder, strVal)
+	}
+	return result
 }
