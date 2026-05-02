@@ -1,2 +1,13 @@
-ALTER TABLE task_instance ADD COLUMN started_at DATETIME NULL AFTER dispatch_time;
-ALTER TABLE task_instance ADD COLUMN finished_at DATETIME NULL AFTER started_at;
+SET @stmt = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='task_instance' AND COLUMN_NAME='started_at') = 0,
+  'ALTER TABLE task_instance ADD COLUMN started_at DATETIME NULL AFTER dispatch_time',
+  'SELECT 1'
+));
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @stmt = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='task_instance' AND COLUMN_NAME='finished_at') = 0,
+  'ALTER TABLE task_instance ADD COLUMN finished_at DATETIME NULL AFTER started_at',
+  'SELECT 1'
+));
+PREPARE stmt FROM @stmt; EXECUTE stmt; DEALLOCATE PREPARE stmt;
