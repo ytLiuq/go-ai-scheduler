@@ -6,7 +6,7 @@ import "time"
 type AIAnalysisRecord struct {
 	ID           int64
 	InstanceID   int64  // optional, 0 if no instance
-	AnalysisType string // cron_parse, log_analysis, schedule_advice
+	AnalysisType string // log_analysis, schedule_advice, task_parse
 	InputJSON    string // snapshot of the input
 	OutputJSON   string // structured AI output
 	Confidence   float64

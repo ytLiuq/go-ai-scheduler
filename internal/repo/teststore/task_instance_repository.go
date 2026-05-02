@@ -95,6 +95,25 @@ func (r *TaskInstanceRepository) ListInstances(_ context.Context) ([]*model.Task
 	return instances, nil
 }
 
+// ListInstancesByTaskID returns all task instances for a given task.
+func (r *TaskInstanceRepository) ListInstancesByTaskID(_ context.Context, taskID int64) ([]*model.TaskInstance, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	instances := make([]*model.TaskInstance, 0)
+	for _, instance := range r.instances {
+		if instance.TaskID != taskID {
+			continue
+		}
+		copyInstance := *instance
+		instances = append(instances, &copyInstance)
+	}
+	sort.Slice(instances, func(i, j int) bool {
+		return instances[i].CreatedAt.Before(instances[j].CreatedAt)
+	})
+	return instances, nil
+}
+
 // ListInstancesByStatus returns instances filtered by status.
 func (r *TaskInstanceRepository) ListInstancesByStatus(_ context.Context, status string, limit int) ([]*model.TaskInstance, error) {
 	r.mu.RLock()

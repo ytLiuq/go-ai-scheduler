@@ -95,6 +95,23 @@ func (r *TaskInstanceRepository) ListInstances(ctx context.Context) ([]*model.Ta
 	return scanTaskInstances(rows)
 }
 
+// ListInstancesByTaskID returns all task instances for a given task.
+func (r *TaskInstanceRepository) ListInstancesByTaskID(ctx context.Context, taskID int64) ([]*model.TaskInstance, error) {
+	const query = `
+		SELECT id, task_id, schedule_instance_id, trigger_time, dispatch_time, worker_id,
+		       status, retry_count, error_code, error_message, analysis_json, trace_id, next_retry_time, created_at, updated_at
+		FROM task_instance
+		WHERE task_id = ?
+		ORDER BY created_at
+	`
+	rows, err := r.db.QueryContext(ctx, query, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("list instances by task id: %w", err)
+	}
+	defer rows.Close()
+	return scanTaskInstances(rows)
+}
+
 // ListInstancesByStatus returns task instances filtered by status.
 func (r *TaskInstanceRepository) ListInstancesByStatus(ctx context.Context, status string, limit int) ([]*model.TaskInstance, error) {
 	const query = `

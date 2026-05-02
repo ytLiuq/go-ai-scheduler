@@ -24,13 +24,3 @@ func TestNextRunInvalidExpr(t *testing.T) {
 		t.Fatal("expected error for invalid cron")
 	}
 }
-
-func TestParseNaturalLanguageRequiresLLM(t *testing.T) {
-	_, err := ParseNaturalLanguage(t.Context(), nil, "every hour")
-	if err == nil {
-		t.Fatal("expected ErrLLMRequired when no LLM adapter")
-	}
-	if err != ErrLLMRequired {
-		t.Fatalf("expected ErrLLMRequired, got %v", err)
-	}
-}

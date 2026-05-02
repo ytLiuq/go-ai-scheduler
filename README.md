@@ -43,7 +43,7 @@ deployments/    deployment manifests
 2. implement worker registration and heartbeat
 3. implement task CRUD and scheduler trigger loop
 4. implement dispatch, execution, retry, and observability
-5. integrate AI cron parsing and log analysis
+5. integrate AI log analysis
 
 ## Current Bootstrap Status
 
@@ -88,7 +88,7 @@ REPO_BACKEND=mysql go run ./cmd/migrate
 
 - `scheduler`: internal control plane, trigger loop, retry loop, worker registration, worker heartbeat, task runtime report
 - `api`: external management and query plane, including task CRUD, worker query, and task instance query
-- `ai-service`: auxiliary HTTP service exposing `/api/v1/cron/next` and `/api/v1/log-analysis/analyze`
+- `ai-service`: auxiliary HTTP service exposing `/api/v1/cron/next`, `/api/v1/log-analysis/analyze`, and other AI helper endpoints
 
 All services are expected to run with `REPO_BACKEND=mysql`. Startup scripts fail fast if MySQL is not configured.
 
@@ -195,9 +195,9 @@ The only required manual setup is creating `.env.ai-service` from `.env.ai-servi
 
 Current AI helper endpoints include:
 
-- `POST /api/v1/cron/parse`
 - `POST /api/v1/log-analysis/analyze`
 - `POST /api/v1/advisor/generate`
+- `POST /api/v1/task/create`
 - `POST /api/v1/cron/next`
 
 ## Web Console
@@ -220,7 +220,7 @@ Current console features:
 - task list, create, edit, pause, resume, and manual trigger
 - worker list and load view
 - task instance list
-- AI tools for cron parsing, log analysis, and scheduling advice
+- AI tools for log analysis, scheduling advice, and task creation
 
 The AI tools page uses the proxied API endpoints and renders structured results in the console instead of raw JSON.
 

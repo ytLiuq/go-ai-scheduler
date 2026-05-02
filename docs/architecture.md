@@ -5,7 +5,7 @@
 - `scheduler`: deterministic scheduling engine
 - `worker`: task executor
 - `api`: management and query API
-- `ai-service`: AI-assisted cron parsing and log analysis
+- `ai-service`: AI-assisted log analysis and scheduling advice
 
 ## Core Runtime Path
 
