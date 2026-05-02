@@ -140,6 +140,33 @@ func main() {
 	healthLoop := health.NewChecker(workerService, l, 30*time.Second, 10*time.Second)
 	go healthLoop.Start(leaderCtx)
 
+	// Record worker load snapshots for trend analysis.
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-leaderCtx.Done():
+				return
+			case <-ticker.C:
+				workers, err := resources.Repositories.Worker.ListWorkers(leaderCtx)
+				if err != nil {
+					continue
+				}
+				for _, w := range workers {
+					_ = resources.Repositories.WorkerLoad.CreateSnapshot(leaderCtx, &model.WorkerLoadSnapshot{
+						WorkerID: w.ID, CurrentLoad: w.CurrentLoad, MaxConcurrency: w.MaxConcurrency, Status: w.Status,
+					})
+				}
+				// Cleanup snapshots older than 7 days.
+				cutoff := time.Now().Add(-7 * 24 * time.Hour)
+				if n, err := resources.Repositories.WorkerLoad.DeleteSnapshotsBefore(leaderCtx, cutoff); err == nil && n > 0 {
+					l.Printf("worker load cleanup: deleted %d old snapshots", n)
+				}
+			}
+		}
+	}()
+
 	grpcListener, err := net.Listen("tcp", cfg.GRPCAddr)
 	if err != nil {
 		l.Fatalf("listen grpc: %v", err)

@@ -48,6 +48,13 @@ type AIAnalysisRepository interface {
 	DeleteOldRecords(ctx context.Context, before time.Time) (int64, error)
 }
 
+// WorkerLoadRepository persists worker load history snapshots.
+type WorkerLoadRepository interface {
+	CreateSnapshot(ctx context.Context, snapshot *model.WorkerLoadSnapshot) error
+	ListSnapshots(ctx context.Context, workerID string, from, to time.Time, limit int) ([]*model.WorkerLoadSnapshot, error)
+	DeleteSnapshotsBefore(ctx context.Context, before time.Time) (int64, error)
+}
+
 // WorkerRepository persists worker liveness and runtime metadata.
 type WorkerRepository interface {
 	UpsertWorker(ctx context.Context, worker *model.WorkerNode) error
