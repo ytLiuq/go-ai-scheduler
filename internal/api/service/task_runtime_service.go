@@ -329,7 +329,10 @@ func (s *TaskRuntimeService) analyzeFailedInstance(instance *model.TaskInstance,
 		return
 	}
 
-	result, err := s.aiClient.AnalyzeLog(ctx, req.ErrorMessage, req.ErrorCode, task.Type, instance.RetryCount)
+	// Enrich error message with task configuration context.
+	enrichedMsg := fmt.Sprintf("[Task: %s | Timeout: %ds | MaxRetry: %d | RetryPolicy: %s]\n%s",
+		task.Name, task.TimeoutSeconds, task.MaxRetry, task.RetryPolicy, req.ErrorMessage)
+	result, err := s.aiClient.AnalyzeLog(ctx, enrichedMsg, req.ErrorCode, task.Type, instance.RetryCount, instance.ID)
 	if err != nil {
 		s.logger.Printf("ai analysis failed schedule_instance_id=%s err=%v", instance.ScheduleInstanceID, err)
 		return

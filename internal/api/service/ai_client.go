@@ -28,13 +28,17 @@ func NewAIClient(serviceURL string) *AIClient {
 }
 
 // AnalyzeLog sends log text to the ai-service for LLM analysis.
-func (c *AIClient) AnalyzeLog(ctx context.Context, logText, errorCode, taskType string, retryCount int) (*LogAnalysisResult, error) {
-	body, _ := json.Marshal(map[string]interface{}{
+func (c *AIClient) AnalyzeLog(ctx context.Context, logText, errorCode, taskType string, retryCount int, instanceID int64) (*LogAnalysisResult, error) {
+	reqBody := map[string]interface{}{
 		"log":         logText,
 		"error_code":  errorCode,
 		"task_type":   taskType,
 		"retry_count": retryCount,
-	})
+	}
+	if instanceID > 0 {
+		reqBody["instance_id"] = instanceID
+	}
+	body, _ := json.Marshal(reqBody)
 
 	url := c.serviceURL + "/api/v1/log-analysis/analyze"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
