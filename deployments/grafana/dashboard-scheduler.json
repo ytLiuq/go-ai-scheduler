@@ -45,6 +45,13 @@
         "targets": [
           {"expr": "rate(ai_requests_total[1m])", "legendFormat": "{{endpoint}}/{{result}}"}
         ]
+      },
+      {
+        "title": "AI Token Usage",
+        "type": "graph",
+        "targets": [
+          {"expr": "rate(ai_tokens_total[5m])", "legendFormat": "{{type}}"}
+        ]
       }
     ]
   }

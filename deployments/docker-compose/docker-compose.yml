@@ -34,5 +34,69 @@ services:
       - "2379:2379"
       - "2380:2380"
 
+  api:
+    image: go-ai-scheduler:latest
+    container_name: go-ai-scheduler-api
+    command: ["/app/api"]
+    ports:
+      - "8082:8082"
+    environment:
+      - REPO_BACKEND=mysql
+      - MYSQL_DSN=root:root@tcp(mysql:3306)/go_ai_scheduler?parseTime=true
+      - REDIS_ADDR=redis:6379
+      - AI_SERVICE_URL=http://ai-service:8083
+      - JWT_SECRET=dev-secret-key
+    depends_on:
+      - mysql
+      - redis
+      - ai-service
+
+  ai-service:
+    image: go-ai-scheduler:latest
+    container_name: go-ai-scheduler-ai
+    command: ["/app/ai-service"]
+    ports:
+      - "8083:8083"
+    environment:
+      - REPO_BACKEND=mysql
+      - MYSQL_DSN=root:root@tcp(mysql:3306)/go_ai_scheduler?parseTime=true
+      - REDIS_ADDR=redis:6379
+      - LLM_ENDPOINT=${LLM_ENDPOINT:-}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o}
+    depends_on:
+      - mysql
+      - redis
+
+  scheduler:
+    image: go-ai-scheduler:latest
+    container_name: go-ai-scheduler-scheduler
+    command: ["/app/scheduler"]
+    ports:
+      - "8081:8081"
+      - "9090:9090"
+    environment:
+      - REPO_BACKEND=mysql
+      - MYSQL_DSN=root:root@tcp(mysql:3306)/go_ai_scheduler?parseTime=true
+      - REDIS_ADDR=redis:6379
+      - ETCD_ENDPOINTS=etcd:2379
+      - AI_SERVICE_URL=http://ai-service:8083
+    depends_on:
+      - mysql
+      - redis
+      - etcd
+      - ai-service
+
+  worker:
+    image: go-ai-scheduler:latest
+    container_name: go-ai-scheduler-worker
+    command: ["/app/worker"]
+    environment:
+      - SCHEDULER_URL=http://scheduler:8081
+      - INTERNAL_PROTOCOL=http
+      - WORKER_ID=worker-local
+    depends_on:
+      - scheduler
+
 volumes:
   mysql-data:

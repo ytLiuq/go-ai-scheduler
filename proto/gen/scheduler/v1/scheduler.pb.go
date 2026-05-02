@@ -307,6 +307,8 @@ type ReportTaskStatusRequest struct {
 	ErrorCode           string `protobuf:"bytes,4,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
 	ErrorMessage        string `protobuf:"bytes,5,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
 	FinishedUnixSeconds int64  `protobuf:"varint,6,opt,name=finished_unix_seconds,json=finishedUnixSeconds,proto3" json:"finished_unix_seconds,omitempty"`
+	StartedAt           string `protobuf:"bytes,7,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	FinishedAt          string `protobuf:"bytes,8,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
 }
 
 func (x *ReportTaskStatusRequest) Reset() {
@@ -381,6 +383,20 @@ func (x *ReportTaskStatusRequest) GetFinishedUnixSeconds() int64 {
 		return x.FinishedUnixSeconds
 	}
 	return 0
+}
+
+func (x *ReportTaskStatusRequest) GetStartedAt() string {
+	if x != nil {
+		return x.StartedAt
+	}
+	return ""
+}
+
+func (x *ReportTaskStatusRequest) GetFinishedAt() string {
+	if x != nil {
+		return x.FinishedAt
+	}
+	return ""
 }
 
 type ReportTaskStatusResponse struct {

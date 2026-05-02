@@ -61,6 +61,8 @@ message ReportTaskStatusRequest {
   string error_code = 4;
   string error_message = 5;
   int64 finished_unix_seconds = 6;
+  string started_at = 7;
+  string finished_at = 8;
 }
 
 message ReportTaskStatusResponse {
