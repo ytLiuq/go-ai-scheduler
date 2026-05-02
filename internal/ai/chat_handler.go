@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/example/go-ai-scheduler/internal/ai/adapter"
 	"github.com/example/go-ai-scheduler/internal/ai/agent"
@@ -169,6 +170,30 @@ func handleChatWS(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapte
 	if convID != "" {
 		ws.Event("conversation_id", map[string]string{"id": convID})
 	}
+}
+
+func getConversationMessages(w http.ResponseWriter, r *http.Request, store *memory.Store) {
+	if store == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}})
+		return
+	}
+	convID := r.PathValue("id")
+	if convID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "conversation id is required"})
+		return
+	}
+	msgs, err := store.GetHistory(r.Context(), convID, 200)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	result := make([]map[string]any, 0, len(msgs))
+	for _, m := range msgs {
+		result = append(result, map[string]any{
+			"id": m.ID, "role": m.Role, "content": m.Content, "created_at": m.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"messages": result})
 }
 
 func firstLine(s string, maxLen int) string {

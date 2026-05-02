@@ -30,6 +30,18 @@ spec:
               value: "go-ai-scheduler:9090"
             - name: INTERNAL_PROTOCOL
               value: "grpc"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
           resources:
             requests:
               cpu: 100m

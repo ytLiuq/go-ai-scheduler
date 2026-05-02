@@ -584,9 +584,11 @@ createApp({
       chatMessages.value = [];
       chatError.value = '';
       try {
-        // Load history via conversations endpoint — we need a new endpoint for messages.
-        // For now, start fresh with this conversation ID.
-        chatMessages.value = [];
+        const data = await api('/api/v1/ai/conversations/' + convId + '/messages');
+        chatMessages.value = (data.messages || []).map(m => ({
+          role: m.role, content: m.content, time: m.created_at
+        }));
+        scrollChatToBottom();
       } catch (e) {
         console.error('load messages:', e);
       }

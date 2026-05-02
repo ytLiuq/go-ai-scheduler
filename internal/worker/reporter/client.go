@@ -112,6 +112,8 @@ func (c *Client) reportGRPC(ctx context.Context, req apiservice.TaskStatusReport
 		Status:             req.Status,
 		ErrorCode:          req.ErrorCode,
 		ErrorMessage:       req.ErrorMessage,
+		StartedAt:          req.StartedAt,
+		FinishedAt:         req.FinishedAt,
 	})
 	if err != nil {
 		return err

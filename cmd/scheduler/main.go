@@ -182,7 +182,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:    cfg.HTTPAddr,
-		Handler: handler.NewSchedulerRouter(workerHandler, taskRuntimeHandler, eventHandler),
+		Handler: handler.NewSchedulerRouter(workerHandler, taskRuntimeHandler, eventHandler, handler.NewWorkerLoadHandler(resources.Repositories.WorkerLoad)),
 	}
 
 	l.Printf("starting scheduler http server on %s", cfg.HTTPAddr)

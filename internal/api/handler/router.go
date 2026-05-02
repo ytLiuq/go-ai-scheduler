@@ -14,7 +14,7 @@ import (
 )
 
 // NewSchedulerRouter wires internal scheduler-facing routes (no auth required).
-func NewSchedulerRouter(workerHandler *WorkerHandler, taskRuntimeHandler *TaskRuntimeHandler, eventHandler *EventHandler) http.Handler {
+func NewSchedulerRouter(workerHandler *WorkerHandler, taskRuntimeHandler *TaskRuntimeHandler, eventHandler *EventHandler, workerLoadHandler *WorkerLoadHandler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", Health)
 	mux.Handle("/metrics", metrics.DefaultRegistry.Handler())
@@ -24,6 +24,7 @@ func NewSchedulerRouter(workerHandler *WorkerHandler, taskRuntimeHandler *TaskRu
 	mux.HandleFunc("POST /api/v1/events/publish", eventHandler.Publish)
 	mux.HandleFunc("POST /api/v1/task-instances/cancel", taskRuntimeHandler.Cancel)
 	mux.HandleFunc("POST /api/v1/task-instances/ack", taskRuntimeHandler.Ack)
+	mux.HandleFunc("GET /api/v1/worker-loads", workerLoadHandler.List)
 	return metrics.Instrument("scheduler", mux)
 }
 
@@ -62,6 +63,10 @@ func NewAPIRouter(authHandler *AuthHandler, workerHandler *WorkerHandler, taskHa
 	mux.HandleFunc("POST /api/v1/ai/chat", requireAuth("viewer", proxyAIHandler("chat")))
 	mux.HandleFunc("GET /api/v1/ai/chat/ws", requireAuth("viewer", proxyWSHandler("chat/ws")))
 	mux.HandleFunc("GET /api/v1/ai/conversations", requireAuth("viewer", proxyAIHandler(http.MethodGet, "conversations")))
+	mux.HandleFunc("GET /api/v1/ai/conversations/", requireAuth("viewer", func(w http.ResponseWriter, r *http.Request) {
+		rest := strings.TrimPrefix(r.URL.Path, "/api/v1/ai/conversations/")
+		proxyAIHandler(http.MethodGet, "conversations/"+rest)(w, r)
+	}))
 
 	// Serve web console static files.
 	mux.Handle("/", http.FileServer(http.Dir("web")))

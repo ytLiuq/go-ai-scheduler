@@ -40,7 +40,7 @@ func TestHTTPInternalProtocolEndToEnd(t *testing.T) {
 
 	schedulerServer := httptest.NewServer(handler.NewSchedulerRouter(
 		handler.NewWorkerHandler(workerService),
-		handler.NewTaskRuntimeHandler(runtimeService), nil,
+		handler.NewTaskRuntimeHandler(runtimeService), nil, nil,
 	))
 	defer schedulerServer.Close()
 
@@ -193,13 +193,13 @@ func TestHTTPInternalProtocolRetryThenSuccess(t *testing.T) {
 	workerService := apiservice.NewWorkerService(workerRepo)
 	schedulerServer := httptest.NewServer(handler.NewSchedulerRouter(
 		handler.NewWorkerHandler(workerService),
-		nil, nil,
+		nil, nil, nil,
 	))
 	defer schedulerServer.Close()
 	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, nil, schedulerServer.URL, logr, nil)
 	schedulerServer.Config.Handler = handler.NewSchedulerRouter(
 		handler.NewWorkerHandler(workerService),
-		handler.NewTaskRuntimeHandler(runtimeService), nil,
+		handler.NewTaskRuntimeHandler(runtimeService), nil, nil,
 	)
 
 	var requestCount atomic.Int32
@@ -359,13 +359,13 @@ func TestHTTPInternalProtocolTimeoutRetryThenSuccess(t *testing.T) {
 	workerService := apiservice.NewWorkerService(workerRepo)
 	schedulerServer := httptest.NewServer(handler.NewSchedulerRouter(
 		handler.NewWorkerHandler(workerService),
-		nil, nil,
+		nil, nil, nil,
 	))
 	defer schedulerServer.Close()
 	runtimeService := apiservice.NewTaskRuntimeService(taskRepo, instanceRepo, workerRepo, router, dispatcher, nil, schedulerServer.URL, logr, nil)
 	schedulerServer.Config.Handler = handler.NewSchedulerRouter(
 		handler.NewWorkerHandler(workerService),
-		handler.NewTaskRuntimeHandler(runtimeService), nil,
+		handler.NewTaskRuntimeHandler(runtimeService), nil, nil,
 	)
 
 	var requestCount atomic.Int32
