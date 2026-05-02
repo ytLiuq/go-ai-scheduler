@@ -14,7 +14,7 @@ source ".env.ai-service"
 
 export REPO_BACKEND="${REPO_BACKEND:-mysql}"
 export MYSQL_DSN="${MYSQL_DSN:-root:root@tcp(127.0.0.1:3306)/go_ai_scheduler?parseTime=true}"
-export AUTO_MIGRATE="${AUTO_MIGRATE:-true}"
+export AUTO_MIGRATE=true
 export MIGRATION_DIR="${MIGRATION_DIR:-migrations}"
 export REDIS_ADDR="${REDIS_ADDR:-127.0.0.1:6379}"
 
