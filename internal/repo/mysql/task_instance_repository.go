@@ -112,6 +112,24 @@ func (r *TaskInstanceRepository) ListInstancesByTaskID(ctx context.Context, task
 	return scanTaskInstances(rows)
 }
 
+// ListInstancesByTimeRange returns task instances within a time window.
+func (r *TaskInstanceRepository) ListInstancesByTimeRange(ctx context.Context, from, to time.Time, limit, offset int) ([]*model.TaskInstance, error) {
+	const query = `
+		SELECT id, task_id, schedule_instance_id, trigger_time, dispatch_time, worker_id,
+		       status, retry_count, error_code, error_message, analysis_json, trace_id, next_retry_time, created_at, updated_at
+		FROM task_instance
+		WHERE created_at >= ? AND created_at <= ?
+		ORDER BY created_at DESC
+		LIMIT ? OFFSET ?
+	`
+	rows, err := r.db.QueryContext(ctx, query, from, to, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list instances by time range: %w", err)
+	}
+	defer rows.Close()
+	return scanTaskInstances(rows)
+}
+
 // ListInstancesByStatus returns task instances filtered by status.
 func (r *TaskInstanceRepository) ListInstancesByStatus(ctx context.Context, status string, limit int) ([]*model.TaskInstance, error) {
 	const query = `

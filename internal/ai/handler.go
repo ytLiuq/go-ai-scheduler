@@ -226,7 +226,7 @@ func autoAdvice(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter,
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("list tasks: %v", err)})
 		return
 	}
-	instances, err := repos.TaskInstance.ListInstances(r.Context())
+	instances, err := repos.TaskInstance.ListInstancesByTimeRange(r.Context(), time.Now().Add(-1*time.Hour), time.Now(), 0, 0)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("list instances: %v", err)})
 		return
@@ -405,7 +405,8 @@ func analyzeTrend(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapte
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("list tasks: %v", err)})
 		return
 	}
-	instances, err := repos.TaskInstance.ListInstances(r.Context())
+	windowFrom := time.Now().Add(-time.Duration(req.TimeWindowHours) * time.Hour)
+	instances, err := repos.TaskInstance.ListInstancesByTimeRange(r.Context(), windowFrom, time.Now(), 0, 0)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("list instances: %v", err)})
 		return

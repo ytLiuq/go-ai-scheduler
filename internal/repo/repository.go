@@ -31,6 +31,7 @@ type TaskInstanceRepository interface {
 	GetInstanceByScheduleID(ctx context.Context, scheduleID string) (*model.TaskInstance, error)
 	ListInstances(ctx context.Context) ([]*model.TaskInstance, error)
 	ListInstancesByTaskID(ctx context.Context, taskID int64) ([]*model.TaskInstance, error)
+	ListInstancesByTimeRange(ctx context.Context, from, to time.Time, limit, offset int) ([]*model.TaskInstance, error)
 	ListInstancesByStatus(ctx context.Context, status string, limit int) ([]*model.TaskInstance, error)
 	ListDueRetryInstances(ctx context.Context, cutoff time.Time, limit int) ([]*model.TaskInstance, error)
 	CountInstancesByStatus(ctx context.Context, status string) (int, error)

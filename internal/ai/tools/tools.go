@@ -115,7 +115,7 @@ func (t *queryInstancesTool) Execute(ctx context.Context, args json.RawMessage) 
 		p.Limit = 20
 	}
 
-	instances, err := t.bundle.TaskInstance.ListInstances(ctx)
+	instances, err := t.bundle.TaskInstance.ListInstancesByTimeRange(ctx, time.Now().Add(-24*time.Hour), time.Now(), 0, 0)
 	if err != nil {
 		return nil, fmt.Errorf("list instances: %w", err)
 	}
@@ -239,7 +239,7 @@ func (t *getTaskDetailTool) Execute(ctx context.Context, args json.RawMessage) (
 	downstream, _ := t.bundle.Task.ListDownstreamTasks(ctx, p.TaskID)
 
 	// Get recent instances.
-	instances, _ := t.bundle.TaskInstance.ListInstances(ctx)
+	instances, _ := t.bundle.TaskInstance.ListInstancesByTimeRange(ctx, time.Now().Add(-24*time.Hour), time.Now(), 0, 0)
 	recentInstances := make([]map[string]any, 0)
 	count := 0
 	for _, inst := range instances {
@@ -294,7 +294,7 @@ func (t *getSystemHealthTool) Definition() adapter.Tool {
 func (t *getSystemHealthTool) Execute(ctx context.Context, args json.RawMessage) (any, error) {
 	tasks, _ := t.bundle.Task.ListTasks(ctx)
 	workers, _ := t.bundle.Worker.ListWorkers(ctx)
-	instances, _ := t.bundle.TaskInstance.ListInstances(ctx)
+	instances, _ := t.bundle.TaskInstance.ListInstancesByTimeRange(ctx, time.Now().Add(-24*time.Hour), time.Now(), 0, 0)
 
 	totalTasks := len(tasks)
 	enabledTasks := 0
@@ -324,16 +324,12 @@ func (t *getSystemHealthTool) Execute(ctx context.Context, args json.RawMessage)
 		avgLoad = float64(totalLoad) / float64(totalCapacity) * 100
 	}
 
-	// Instance stats for last 24h.
-	cutoff := time.Now().Add(-24 * time.Hour)
+	// Instance stats for last 24h (query already filters to last 24h).
 	recentTotal := 0
 	recentFailed := 0
 	recentSuccess := 0
 	recentRunning := 0
 	for _, inst := range instances {
-		if inst.TriggerTime.Before(cutoff) {
-			continue
-		}
 		recentTotal++
 		switch inst.Status {
 		case "success":

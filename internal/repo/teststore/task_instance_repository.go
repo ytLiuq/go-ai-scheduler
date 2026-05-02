@@ -114,6 +114,31 @@ func (r *TaskInstanceRepository) ListInstancesByTaskID(_ context.Context, taskID
 	return instances, nil
 }
 
+// ListInstancesByTimeRange returns task instances within a time window.
+func (r *TaskInstanceRepository) ListInstancesByTimeRange(_ context.Context, from, to time.Time, limit, offset int) ([]*model.TaskInstance, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	instances := make([]*model.TaskInstance, 0)
+	for _, instance := range r.instances {
+		if instance.CreatedAt.Before(from) || instance.CreatedAt.After(to) {
+			continue
+		}
+		copyInstance := *instance
+		instances = append(instances, &copyInstance)
+	}
+	sort.Slice(instances, func(i, j int) bool {
+		return instances[i].CreatedAt.After(instances[j].CreatedAt)
+	})
+	if offset > 0 && offset < len(instances) {
+		instances = instances[offset:]
+	}
+	if limit > 0 && limit < len(instances) {
+		instances = instances[:limit]
+	}
+	return instances, nil
+}
+
 // ListInstancesByStatus returns instances filtered by status.
 func (r *TaskInstanceRepository) ListInstancesByStatus(_ context.Context, status string, limit int) ([]*model.TaskInstance, error) {
 	r.mu.RLock()
