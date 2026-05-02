@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/example/go-ai-scheduler/internal/ai/adapter"
+	"github.com/example/go-ai-scheduler/internal/ai/prompts"
 )
 
 // ErrLLMRequired is returned when an LLM is not available and the operation
@@ -39,8 +40,7 @@ func Generate(ctx context.Context, llm *adapter.LLMAdapter, sctx Context) ([]Adv
 		return nil, ErrLLMRequired
 	}
 
-	systemPrompt := `You are a workload scheduling advisor. Given the scheduler metrics below, suggest actionable recommendations. Return ONLY valid JSON array:
-[{"type": "<throttle|migrate|scale|config>", "title": "<title>", "description": "<detail>", "confidence": <0.0-1.0>, "auto_apply": false}]`
+	systemPrompt := prompts.Advisor
 
 	userPrompt := fmt.Sprintf(`Avg worker load: %.2f%%
 Total workers: %d (online: %d)

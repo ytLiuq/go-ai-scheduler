@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/example/go-ai-scheduler/internal/ai/adapter"
+	"github.com/example/go-ai-scheduler/internal/ai/prompts"
 	"github.com/example/go-ai-scheduler/internal/model"
 )
 
@@ -101,8 +102,7 @@ func AnalyzeWithLLM(ctx context.Context, llm *adapter.LLMAdapter, snapshot DataS
 		return nil, ErrLLMRequired
 	}
 
-	systemPrompt := `You are a system reliability analyst reviewing scheduler metrics. Analyze the current system state and identify trends. Return ONLY valid JSON:
-{"overall_assessment": "<one-paragraph assessment>", "trends": [{"metric": "<metric_name>", "direction": "increasing|decreasing|stable", "detail": "<detail>"}], "recommendations": [{"type": "scale|throttle|migrate|config|investigate", "title": "<short title>", "description": "<detail>", "urgency": "low|medium|high"}]}`
+	systemPrompt := prompts.TrendAnalysis
 
 	userPrompt := fmt.Sprintf(`Time window: %d hours
 

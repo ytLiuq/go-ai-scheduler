@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/example/go-ai-scheduler/internal/ai/adapter"
+	"github.com/example/go-ai-scheduler/internal/ai/prompts"
 )
 
 // ErrLLMRequired is returned when an LLM is not available and the operation
@@ -29,8 +30,7 @@ func AnalyzeWithLLM(ctx context.Context, llm *adapter.LLMAdapter, logText, error
 		return nil, ErrLLMRequired
 	}
 
-	systemPrompt := `You are an on-call SRE analyzing task failures. Return ONLY valid JSON:
-{"summary": "<one-line summary>", "severity": "low|medium|high", "categories": ["<category>"], "root_cause": "<root cause>", "fix": "<actionable fix>", "confidence": <0.0-1.0>}`
+	systemPrompt := prompts.LogAnalysis
 
 	userPrompt := fmt.Sprintf("Task type: %s\nError code: %s\nRetry count: %d\nError log:\n%s",
 		taskType, errorCode, retryCount, logText)

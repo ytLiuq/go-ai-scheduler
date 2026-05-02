@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/example/go-ai-scheduler/internal/ai/adapter"
+	"github.com/example/go-ai-scheduler/internal/ai/prompts"
 	"github.com/example/go-ai-scheduler/internal/model"
 )
 
@@ -94,8 +95,7 @@ func PredictWithLLM(ctx context.Context, llm *adapter.LLMAdapter, task *model.Ta
 		return nil, ErrLLMRequired
 	}
 
-	systemPrompt := `You are a task execution time prediction expert. Given historical execution data and task configuration, predict the expected duration of the next execution. Return ONLY valid JSON:
-{"predicted_duration_seconds": <float>, "confidence": <0.0-1.0>, "trend": "<stable|increasing|decreasing|volatile>", "explanation": "<one-line explanation>"}`
+	systemPrompt := prompts.PredictDuration
 
 	userPrompt := fmt.Sprintf(`Task configuration:
 - Name: %s

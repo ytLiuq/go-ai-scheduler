@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/example/go-ai-scheduler/internal/ai/adapter"
+	"github.com/example/go-ai-scheduler/internal/ai/prompts"
 	"github.com/example/go-ai-scheduler/internal/pkg/cronexpr"
 )
 
@@ -33,26 +34,7 @@ func ParseNaturalLanguage(ctx context.Context, llm *adapter.LLMAdapter, input st
 		return nil, ErrLLMRequired
 	}
 
-	systemPrompt := `You are a task scheduler assistant. Convert the user's natural language description into a task configuration. Return ONLY valid JSON in this exact format:
-{
-  "name": "<short kebab-case task name>",
-  "type": "container|shell|http",
-  "image": "<docker image, for container type only>",
-  "cron_expr": "<5-field cron, empty if not periodic>",
-  "payload": "<command or args, empty if not needed>",
-  "max_retry": <integer, default 0>,
-  "retry_policy": "fixed_interval|exponential_backoff|error_code",
-  "explanation": "<one-line summary of what you understood>",
-  "confidence": <0.0-1.0>
-}
-
-Rules:
-- If it's a container image (has slashes or common registries), use type "container"
-- If it mentions HTTP/URL, use type "http"
-- Otherwise default to type "shell"
-- For cron: "每天早上9点" = "0 9 * * *", "每小时" = "0 * * * *", "每分钟" = "* * * * *", "工作日" = weekdays, etc.
-- If no schedule mentioned, cron_expr should be ""
-- If retry is mentioned (e.g., "重试3次"), set max_retry accordingly`
+	systemPrompt := prompts.TaskParser
 
 	result, err := llm.Complete(ctx, systemPrompt, input)
 	if err != nil {
