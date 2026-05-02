@@ -50,9 +50,12 @@ func NewAPIRouter(authHandler *AuthHandler, workerHandler *WorkerHandler, taskHa
 
 	// AI endpoints proxied to ai-service.
 	mux.HandleFunc("GET /api/v1/ai/status", requireAuth("viewer", proxyAIHandler(http.MethodGet, "status")))
-	mux.HandleFunc("POST /api/v1/ai/cron/parse", requireAuth("viewer", proxyAIHandler("cron/parse")))
+
 	mux.HandleFunc("POST /api/v1/ai/log-analysis/analyze", requireAuth("viewer", proxyAIHandler("log-analysis/analyze")))
 	mux.HandleFunc("POST /api/v1/ai/advisor/generate", requireAuth("viewer", proxyAIHandler("advisor/generate")))
+	mux.HandleFunc("POST /api/v1/ai/advisor/auto", requireAuth("viewer", proxyAIHandler("advisor/auto")))
+	mux.HandleFunc("POST /api/v1/ai/task/predict-duration", requireAuth("viewer", proxyAIHandler("task/predict-duration")))
+	mux.HandleFunc("POST /api/v1/ai/trend/analyze", requireAuth("viewer", proxyAIHandler("trend/analyze")))
 	mux.HandleFunc("POST /api/v1/ai/task/create", requireAuth("operator", proxyAIHandler("task/create")))
 	mux.HandleFunc("POST /api/v1/ai/chat", requireAuth("viewer", proxyAIHandler("chat")))
 	mux.HandleFunc("GET /api/v1/ai/conversations", requireAuth("viewer", proxyAIHandler(http.MethodGet, "conversations")))

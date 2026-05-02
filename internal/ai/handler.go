@@ -2,17 +2,20 @@ package ai
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/example/go-ai-scheduler/internal/ai/adapter"
 	aiadvisor "github.com/example/go-ai-scheduler/internal/ai/advisor"
-	aicron "github.com/example/go-ai-scheduler/internal/ai/cron"
+	"github.com/example/go-ai-scheduler/internal/ai/cron"
 	"github.com/example/go-ai-scheduler/internal/ai/loganalysis"
 	"github.com/example/go-ai-scheduler/internal/ai/memory"
+	predictduration "github.com/example/go-ai-scheduler/internal/ai/predictduration"
 	"github.com/example/go-ai-scheduler/internal/ai/taskparser"
 	"github.com/example/go-ai-scheduler/internal/ai/tools"
+	"github.com/example/go-ai-scheduler/internal/ai/trend"
 	"github.com/example/go-ai-scheduler/internal/model"
 	"github.com/example/go-ai-scheduler/internal/pkg/metrics"
 	"github.com/example/go-ai-scheduler/internal/repo"
@@ -27,15 +30,12 @@ type cronNextRequest struct {
 	BaseTime   time.Time `json:"base_time"`
 }
 
-type cronParseRequest struct {
-	Input string `json:"input"`
-}
-
 type logAnalysisRequest struct {
 	Log        string `json:"log"`
 	ErrorCode  string `json:"error_code"`
 	TaskType   string `json:"task_type"`
 	RetryCount int    `json:"retry_count"`
+	InstanceID int64  `json:"instance_id,omitempty"`
 }
 
 type advisorRequest struct {
@@ -48,19 +48,28 @@ type advisorRequest struct {
 	MaxPendingConfig     int     `json:"max_pending_config"`
 }
 
+type predictDurationRequest struct {
+	TaskID int64 `json:"task_id"`
+}
+
+type trendAnalysisRequest struct {
+	TimeWindowHours int `json:"time_window_hours,omitempty"`
+}
+
 // NewRouter wires AI helper endpoints.
-func NewRouter(llm *adapter.LLMAdapter, aiRepo repo.AIAnalysisRepository, registry *tools.Registry, store *memory.Store) http.Handler {
+func NewRouter(llm *adapter.LLMAdapter, repos *repo.Bundle, registry *tools.Registry, store *memory.Store) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", health)
 	mux.HandleFunc("GET /api/v1/status", func(w http.ResponseWriter, r *http.Request) { status(w, r, llm) })
 	mux.Handle("/metrics", metrics.DefaultRegistry.Handler())
 	mux.HandleFunc("/api/v1/cron/next", cronNext)
-	mux.HandleFunc("POST /api/v1/cron/parse", func(w http.ResponseWriter, r *http.Request) { parseCronNatural(w, r, llm, aiRepo) })
-	mux.HandleFunc("/api/v1/log-analysis/analyze", func(w http.ResponseWriter, r *http.Request) { analyzeLog(w, r, llm, aiRepo) })
-	mux.HandleFunc("POST /api/v1/advisor/generate", func(w http.ResponseWriter, r *http.Request) { generateAdvice(w, r, llm, aiRepo) })
-	mux.HandleFunc("POST /api/v1/task/create", func(w http.ResponseWriter, r *http.Request) { parseTaskNatural(w, r, llm, aiRepo) })
+	mux.HandleFunc("/api/v1/log-analysis/analyze", func(w http.ResponseWriter, r *http.Request) { analyzeLog(w, r, llm, repos) })
+	mux.HandleFunc("POST /api/v1/advisor/generate", func(w http.ResponseWriter, r *http.Request) { generateAdvice(w, r, llm, repos) })
+	mux.HandleFunc("POST /api/v1/advisor/auto", func(w http.ResponseWriter, r *http.Request) { autoAdvice(w, r, llm, repos) })
+	mux.HandleFunc("POST /api/v1/task/create", func(w http.ResponseWriter, r *http.Request) { parseTaskNatural(w, r, llm, repos) })
+	mux.HandleFunc("POST /api/v1/task/predict-duration", func(w http.ResponseWriter, r *http.Request) { predictDuration(w, r, llm, repos) })
+	mux.HandleFunc("POST /api/v1/trend/analyze", func(w http.ResponseWriter, r *http.Request) { analyzeTrend(w, r, llm, repos) })
 	mux.HandleFunc("POST /api/v1/chat", func(w http.ResponseWriter, r *http.Request) { handleChat(w, r, llm, registry, store) })
-	// GET conversations list
 	mux.HandleFunc("GET /api/v1/conversations", func(w http.ResponseWriter, r *http.Request) { listConversations(w, r, store) })
 	return metrics.Instrument("ai-service", mux)
 }
@@ -98,7 +107,7 @@ func cronNext(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"})
 		return
 	}
-	response, err := aicron.NextRun(req.Expression, req.BaseTime)
+	response, err := cron.NextRun(req.Expression, req.BaseTime)
 	if err != nil {
 		metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "cron_next", "result": "error"})
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -108,37 +117,7 @@ func cronNext(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func parseCronNatural(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter, aiRepo repo.AIAnalysisRepository) {
-	var req cronParseRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"})
-		return
-	}
-	if req.Input == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "input is required"})
-		return
-	}
-	resp, err := aicron.ParseNaturalLanguage(r.Context(), llm, req.Input)
-	if err != nil {
-		metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "cron_parse", "result": "error"})
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "cron_parse", "result": "ok"})
-	if aiRepo != nil {
-		outputJSON, _ := json.Marshal(resp)
-		inputJSON, _ := json.Marshal(req)
-		persistAIRecord(r, aiRepo, &model.AIAnalysisRecord{
-			AnalysisType: "cron_parse",
-			InputJSON:    string(inputJSON),
-			OutputJSON:   string(outputJSON),
-			Confidence:   resp.Confidence,
-		})
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
-func analyzeLog(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter, aiRepo repo.AIAnalysisRepository) {
+func analyzeLog(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter, repos *repo.Bundle) {
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w, r.Method)
 		return
@@ -148,6 +127,29 @@ func analyzeLog(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter,
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"})
 		return
 	}
+
+	if req.InstanceID > 0 && repos != nil {
+		instance, err := repos.TaskInstance.GetInstance(r.Context(), req.InstanceID)
+		if err == nil && instance != nil {
+			task, err := repos.Task.GetTask(r.Context(), instance.TaskID)
+			if err == nil && task != nil {
+				req.Log = fmt.Sprintf(
+					"[Task: %s | Type: %s | Timeout: %ds | MaxRetry: %d | RetryPolicy: %s]\n[Instance ID: %d | RetryCount: %d | ErrorCode: %s | Status: %s]\n%s",
+					task.Name, task.Type, task.TimeoutSeconds, task.MaxRetry, task.RetryPolicy,
+					instance.ID, instance.RetryCount, instance.ErrorCode, instance.Status,
+					req.Log,
+				)
+			}
+			if req.ErrorCode == "" {
+				req.ErrorCode = instance.ErrorCode
+			}
+			if req.TaskType == "" && task != nil {
+				req.TaskType = task.Type
+			}
+			req.RetryCount = instance.RetryCount
+		}
+	}
+
 	result, err := loganalysis.AnalyzeWithLLM(r.Context(), llm, req.Log, req.ErrorCode, req.TaskType, req.RetryCount)
 	if err != nil {
 		metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "log_analysis", "result": "error"})
@@ -155,10 +157,10 @@ func analyzeLog(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter,
 		return
 	}
 	metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "log_analysis", "result": "ok"})
-	if aiRepo != nil {
+	if repos != nil && repos.AIAnalysis != nil {
 		outputJSON, _ := json.Marshal(result)
 		inputJSON, _ := json.Marshal(req)
-		persistAIRecord(r, aiRepo, &model.AIAnalysisRecord{
+		persistAIRecord(r, repos.AIAnalysis, &model.AIAnalysisRecord{
 			AnalysisType: "log_analysis",
 			InputJSON:    string(inputJSON),
 			OutputJSON:   string(outputJSON),
@@ -168,7 +170,7 @@ func analyzeLog(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter,
 	writeJSON(w, http.StatusOK, result)
 }
 
-func generateAdvice(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter, aiRepo repo.AIAnalysisRepository) {
+func generateAdvice(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter, repos *repo.Bundle) {
 	var req advisorRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"})
@@ -189,7 +191,7 @@ func generateAdvice(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdap
 		return
 	}
 	metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "advisor", "result": "ok"})
-	if aiRepo != nil {
+	if repos != nil && repos.AIAnalysis != nil {
 		inputJSON, _ := json.Marshal(req)
 		outputJSON, _ := json.Marshal(advices)
 		var maxConf float64
@@ -198,7 +200,7 @@ func generateAdvice(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdap
 				maxConf = a.Confidence
 			}
 		}
-		persistAIRecord(r, aiRepo, &model.AIAnalysisRecord{
+		persistAIRecord(r, repos.AIAnalysis, &model.AIAnalysisRecord{
 			AnalysisType: "schedule_advice",
 			InputJSON:    string(inputJSON),
 			OutputJSON:   string(outputJSON),
@@ -206,6 +208,230 @@ func generateAdvice(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdap
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"advices": advices})
+}
+
+func autoAdvice(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter, repos *repo.Bundle) {
+	if repos == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "repositories not available"})
+		return
+	}
+
+	workers, err := repos.Worker.ListWorkers(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("list workers: %v", err)})
+		return
+	}
+	tasks, err := repos.Task.ListTasks(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("list tasks: %v", err)})
+		return
+	}
+	instances, err := repos.TaskInstance.ListInstances(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("list instances: %v", err)})
+		return
+	}
+
+	var totalWorkers, onlineWorkers int
+	var totalLoad float64
+	for _, w := range workers {
+		totalWorkers++
+		if w.Status == "online" {
+			onlineWorkers++
+			if w.MaxConcurrency > 0 {
+				totalLoad += float64(w.CurrentLoad) / float64(w.MaxConcurrency)
+			}
+		}
+	}
+	avgWorkerLoad := 0.0
+	if onlineWorkers > 0 {
+		avgWorkerLoad = totalLoad / float64(onlineWorkers)
+	}
+
+	var pendingInstances, failedLastHour int
+	var totalLatency float64
+	var latencyCount int
+	cutoff := time.Now().Add(-1 * time.Hour)
+	for _, inst := range instances {
+		if inst.Status == "pending" || inst.Status == "dispatched" {
+			pendingInstances++
+		}
+		if inst.CreatedAt.After(cutoff) && inst.Status == "failed" {
+			failedLastHour++
+		}
+		if inst.Status == "success" && !inst.DispatchTime.IsZero() {
+			lat := inst.UpdatedAt.Sub(inst.DispatchTime).Milliseconds()
+			if lat > 0 {
+				totalLatency += float64(lat)
+				latencyCount++
+			}
+		}
+	}
+	avgDispatchLatencyMs := 0.0
+	if latencyCount > 0 {
+		avgDispatchLatencyMs = totalLatency / float64(latencyCount)
+	}
+
+	maxPendingConfig := 0
+	for _, t := range tasks {
+		if t.TimeoutSeconds > maxPendingConfig {
+			maxPendingConfig = t.TimeoutSeconds
+		}
+	}
+
+	ctx := aiadvisor.Context{
+		AvgWorkerLoad:        avgWorkerLoad,
+		TotalWorkers:         totalWorkers,
+		OnlineWorkers:        onlineWorkers,
+		PendingInstances:     pendingInstances,
+		FailedLastHour:       failedLastHour,
+		AvgDispatchLatencyMs: avgDispatchLatencyMs,
+		MaxPendingConfig:     maxPendingConfig,
+	}
+
+	advices, err := aiadvisor.Generate(r.Context(), llm, ctx)
+	if err != nil {
+		metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "auto_advisor", "result": "error"})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "auto_advisor", "result": "ok"})
+	if repos.AIAnalysis != nil {
+		outputJSON, _ := json.Marshal(advices)
+		inputJSON, _ := json.Marshal(ctx)
+		var maxConf float64
+		for _, a := range advices {
+			if a.Confidence > maxConf {
+				maxConf = a.Confidence
+			}
+		}
+		persistAIRecord(r, repos.AIAnalysis, &model.AIAnalysisRecord{
+			AnalysisType: "auto_advice",
+			InputJSON:    string(inputJSON),
+			OutputJSON:   string(outputJSON),
+			Confidence:   maxConf,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"advices": advices,
+		"context": ctx,
+	})
+}
+
+func predictDuration(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter, repos *repo.Bundle) {
+	var req predictDurationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"})
+		return
+	}
+	if req.TaskID <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "task_id is required"})
+		return
+	}
+	if repos == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "repositories not available"})
+		return
+	}
+
+	task, err := repos.Task.GetTask(r.Context(), req.TaskID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("task not found: %v", err)})
+		return
+	}
+
+	instances, err := repos.TaskInstance.ListInstancesByTaskID(r.Context(), req.TaskID)
+	if err != nil {
+		metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "predict_duration", "result": "error"})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	stats := predictduration.ComputeStats(instances)
+	if stats.Count == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"predicted_duration_seconds": nil,
+			"confidence":                 0,
+			"trend":                      "unknown",
+			"explanation":                "no completed instances available for prediction",
+			"historical_stats":           stats,
+		})
+		return
+	}
+
+	result, err := predictduration.PredictWithLLM(r.Context(), llm, task, stats)
+	if err != nil {
+		metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "predict_duration", "result": "error"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "predict_duration", "result": "ok"})
+	if repos.AIAnalysis != nil {
+		outputJSON, _ := json.Marshal(result)
+		inputJSON, _ := json.Marshal(req)
+		persistAIRecord(r, repos.AIAnalysis, &model.AIAnalysisRecord{
+			AnalysisType: "predict_duration",
+			InputJSON:    string(inputJSON),
+			OutputJSON:   string(outputJSON),
+			Confidence:   result.Confidence,
+		})
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func analyzeTrend(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter, repos *repo.Bundle) {
+	var req trendAnalysisRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"})
+		return
+	}
+	if req.TimeWindowHours <= 0 {
+		req.TimeWindowHours = 24
+	}
+	if repos == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "repositories not available"})
+		return
+	}
+
+	workers, err := repos.Worker.ListWorkers(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("list workers: %v", err)})
+		return
+	}
+	tasks, err := repos.Task.ListTasks(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("list tasks: %v", err)})
+		return
+	}
+	instances, err := repos.TaskInstance.ListInstances(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("list instances: %v", err)})
+		return
+	}
+
+	snapshot := trend.ComputeSnapshot(workers, tasks, instances, req.TimeWindowHours)
+
+	result, err := trend.AnalyzeWithLLM(r.Context(), llm, snapshot)
+	if err != nil {
+		metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "trend_analysis", "result": "error"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "trend_analysis", "result": "ok"})
+	if repos.AIAnalysis != nil {
+		outputJSON, _ := json.Marshal(result)
+		inputJSON, _ := json.Marshal(req)
+		persistAIRecord(r, repos.AIAnalysis, &model.AIAnalysisRecord{
+			AnalysisType: "trend_analysis",
+			InputJSON:    string(inputJSON),
+			OutputJSON:   string(outputJSON),
+			Confidence:   0,
+		})
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -221,7 +447,7 @@ func methodNotAllowed(w http.ResponseWriter, method string) {
 	})
 }
 
-func parseTaskNatural(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter, aiRepo repo.AIAnalysisRepository) {
+func parseTaskNatural(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter, repos *repo.Bundle) {
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w, r.Method)
 		return
@@ -242,10 +468,10 @@ func parseTaskNatural(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAd
 		return
 	}
 	metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "task_parse", "result": "ok"})
-	if aiRepo != nil {
+	if repos != nil && repos.AIAnalysis != nil {
 		outputJSON, _ := json.Marshal(resp)
 		inputJSON, _ := json.Marshal(req)
-		persistAIRecord(r, aiRepo, &model.AIAnalysisRecord{
+		persistAIRecord(r, repos.AIAnalysis, &model.AIAnalysisRecord{
 			AnalysisType: "task_parse",
 			InputJSON:    string(inputJSON),
 			OutputJSON:   string(outputJSON),

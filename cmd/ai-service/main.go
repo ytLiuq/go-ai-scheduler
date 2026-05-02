@@ -41,7 +41,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:    cfg.HTTPAddr,
-		Handler: ai.NewRouter(llm, resources.Repositories.AIAnalysis, registry, store),
+		Handler: ai.NewRouter(llm, resources.Repositories, registry, store),
 	}
 
 	l.Printf("starting ai-service http server on %s", cfg.HTTPAddr)
