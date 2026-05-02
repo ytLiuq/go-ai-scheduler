@@ -9,15 +9,25 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
+// Usage tracks token consumption for an LLM request.
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
 // LLMAdapter provides a unified interface to LLM providers (OpenAI-compatible API).
 type LLMAdapter struct {
-	endpoint   string
-	apiKey     string
-	model      string
-	httpClient *http.Client
+	endpoint        string
+	apiKey          string
+	model           string
+	httpClient      *http.Client
+	totalPrompt     atomic.Int64
+	totalCompletion atomic.Int64
 }
 
 // Config configures the LLM adapter.
@@ -73,6 +83,23 @@ func (a *LLMAdapter) HasAPIKey() bool {
 	return a != nil && a.apiKey != ""
 }
 
+// TokenUsage returns accumulated token counts since startup.
+func (a *LLMAdapter) TokenUsage() (prompt, completion int64) {
+	if a == nil {
+		return 0, 0
+	}
+	return a.totalPrompt.Load(), a.totalCompletion.Load()
+}
+
+func (a *LLMAdapter) recordUsage(u Usage) {
+	if u.PromptTokens > 0 {
+		a.totalPrompt.Add(int64(u.PromptTokens))
+	}
+	if u.CompletionTokens > 0 {
+		a.totalCompletion.Add(int64(u.CompletionTokens))
+	}
+}
+
 // --------------- types ---------------
 
 // ChatRequest is an OpenAI-compatible chat completion request.
@@ -122,6 +149,7 @@ type FunctionCallArgs struct {
 // ChatResponse is an OpenAI-compatible non-streaming response.
 type ChatResponse struct {
 	Choices []Choice `json:"choices"`
+	Usage   Usage    `json:"usage,omitempty"`
 }
 
 // Choice contains the completion content.
@@ -144,6 +172,7 @@ type StreamEvent struct {
 // chatChunk is a single SSE data line parsed from the stream.
 type chatChunk struct {
 	Choices []chunkChoice `json:"choices"`
+	Usage   *Usage        `json:"usage,omitempty"`
 }
 
 type chunkChoice struct {
@@ -221,6 +250,7 @@ func (a *LLMAdapter) CompleteWithTools(ctx context.Context, messages []Message, 
 		return "", nil, fmt.Errorf("llm returned empty choices")
 	}
 	choice := chatResp.Choices[0]
+		a.recordUsage(chatResp.Usage)
 	return choice.Message.Content, choice.Message.ToolCalls, nil
 }
 
@@ -419,5 +449,6 @@ func (a *LLMAdapter) completeMessages(ctx context.Context, messages []Message) (
 	if len(chatResp.Choices) == 0 {
 		return "", fmt.Errorf("llm returned empty choices")
 	}
+	a.recordUsage(chatResp.Usage)
 	return chatResp.Choices[0].Message.Content, nil
 }

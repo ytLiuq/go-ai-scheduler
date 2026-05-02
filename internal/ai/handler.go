@@ -86,14 +86,20 @@ func status(w http.ResponseWriter, _ *http.Request, llm *adapter.LLMAdapter) {
 		model = llm.Model()
 		endpoint = llm.Endpoint()
 	}
+	promptTokens, completionTokens := int64(0), int64(0)
+	if llm != nil {
+		promptTokens, completionTokens = llm.TokenUsage()
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":          "ok",
-		"service":         "ai-service",
-		"llm_enabled":     llmEnabled,
-		"model":           model,
-		"endpoint":        endpoint,
-		"api_key_present": llm != nil && llm.HasAPIKey(),
-		"server_time":     time.Now().UTC().Format(time.RFC3339),
+		"status":            "ok",
+		"service":           "ai-service",
+		"llm_enabled":       llmEnabled,
+		"model":             model,
+		"endpoint":          endpoint,
+		"api_key_present":   llm != nil && llm.HasAPIKey(),
+		"prompt_tokens":     promptTokens,
+		"completion_tokens": completionTokens,
+		"server_time":       time.Now().UTC().Format(time.RFC3339),
 	})
 }
 
