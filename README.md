@@ -36,7 +36,8 @@
 - Load-aware routing (least-loaded, round-robin)
 - Sharded task execution
 - Retry with configurable policies (fixed interval, exponential backoff, error-code-based)
-- Downstream task chaining via dependencies
+- Downstream task chaining via dependencies + DAG visualization
+- Webhook event triggers with payload template injection (`{{.event.payload.key}}`)
 
 ### AI Capabilities (ai-service, port :8083)
 
@@ -53,9 +54,10 @@
 | `POST /api/v1/cron/next` | Cron next-run computation |
 | `GET /api/v1/conversations` | List chat conversations |
 | `GET /api/v1/conversations/{id}/messages` | Load chat history |
+| `POST /api/v1/events/receive` | Webhook event trigger with payload injection |
 
 ### AI Agent Tools
-The chat agent has access to 9 tools: `query_tasks`, `query_instances`, `query_workers`, `get_task_detail`, `get_system_health`, `analyze_failure`, `create_task`, `trigger_task`, `pause_task`.
+The chat agent has access to 12 tools: `query_tasks`, `query_instances`, `query_workers`, `get_task_detail`, `get_system_health`, `analyze_failure`, `create_task`, `trigger_task`, `pause_task`, `retry_failed_instance`, `delete_task`, `get_worker_load_history`.
 
 ### Observability
 - Prometheus `/metrics` on all services
@@ -66,6 +68,7 @@ The chat agent has access to 9 tools: `query_tasks`, `query_instances`, `query_w
 
 ### Security
 - JWT authentication with RBAC (admin/operator/viewer)
+- Multi-tenant isolation via JWT claims
 - LLM endpoint rate limiting (`AI_RATE_LIMIT_RPM` env var)
 - Multi-model fallback (`LLM_FALLBACK_ENDPOINT`)
 
@@ -132,7 +135,10 @@ Demo logins: `admin/admin123`, `operator/operator123`, `viewer/viewer123`
 | `LLM_FALLBACK_MODEL` | `gpt-4o` | Fallback model |
 | `AI_RATE_LIMIT_RPM` | `0` (no limit) | LLM request rate limit |
 | `AI_SERVICE_URL` | `http://127.0.0.1:8083` | API → ai-service proxy target |
+| `AI_RATE_LIMIT_RPM` | `0` (no limit) | LLM request rate limit (requests/minute) |
+| `JWT_SECRET` | auto-generated | JWT signing key |
 | `LOG_LEVEL` | `info` | debug/info/warn/error |
+| `SCHEDULER_URL` | `http://127.0.0.1:8081` | Worker/API → scheduler target |
 
 ## Deployment
 

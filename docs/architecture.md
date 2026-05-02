@@ -1,30 +1,53 @@
-# Architecture Notes
+# Architecture
 
-## v1 Services
+## Services
 
-- `scheduler`: deterministic scheduling engine
-- `worker`: task executor
-- `api`: management and query API
-- `ai-service`: AI-assisted log analysis and scheduling advice
+| Service | Port | Role |
+|---------|------|------|
+| `api` | :8082 | External management API (JWT auth, RBAC), Web console host, AI proxy |
+| `ai-service` | :8083 | AI auxiliary service (LLM agent, analysis, prediction, trend) |
+| `scheduler` | :8081 / :9090 | Control plane — trigger loop, retry loop, dispatch, leader election |
+| `worker` | :8080 | Task executor (shell, http, container), heartbeat, status reporting |
+
+## Transport
+
+- **External** (user ↔ API): HTTP + JWT. AI chat over WebSocket with SSE fallback.
+- **Internal** (API ↔ ai-service): HTTP reverse proxy.
+- **Internal** (scheduler ↔ worker): HTTP or gRPC, switchable via `INTERNAL_PROTOCOL`.
 
 ## Core Runtime Path
 
-1. task definition stored in MySQL
-2. scheduler leader scans due tasks
-3. scheduler creates `task_instance`
-4. scheduler selects worker and dispatches via gRPC
-5. worker executes task and reports status
-6. scheduler updates final instance state and retry plan
+1. Task defined via API or AI natural language → stored in MySQL
+2. Scheduler leader election (MySQL `GET_LOCK` or etcd)
+3. Timing wheel + trigger loop scans `next_trigger_time` → creates `task_instance`
+4. Router picks least-loaded available worker → dispatch (HTTP or gRPC)
+5. Worker executes (shell/http/container) → reports status
+6. On failure: retry loop handles re-dispatch, AI auto-analyzes
+7. On success: downstream dependency tasks advance
 
-## Current Runtime Notes
+## AI Decision Flow
 
-- In `memory` mode, the scheduler elects itself leader locally for single-node development.
-- In `mysql` mode, the scheduler uses MySQL `GET_LOCK` for leader gating before starting trigger and retry loops.
-- All services expose `/metrics` for process-local counters.
-- `ai-service` exposes deterministic helper APIs and remains outside the core scheduling decision path.
+```
+User message → API proxy → ai-service → LLM (with tools)
+                                           ↓
+                              Agent loop: tool_call → execute → tool_result → LLM
+                                           ↓
+                              SSE/WebSocket → frontend
+```
+
+AI does NOT participate in core scheduling decisions. It is advisory only.
+
+## Storage
+
+| System | Purpose |
+|--------|---------|
+| MySQL | All persistent state (tasks, instances, workers, AI records, conversations) |
+| Redis | Cache (due tasks, worker state, worker load, AI query cache). Optional — degrades gracefully to MySQL-only. |
+| etcd | Leader election (alternative to MySQL `GET_LOCK`) |
 
 ## Design Constraints
 
 - AI is not allowed to decide whether a task runs.
-- etcd is only used for coordination, not business persistence.
-- worker retry must be centralized through scheduler to avoid duplicates.
+- Worker retry must be centralized through scheduler to avoid duplicates.
+- All services are single Go binaries — no application server, no sidecar.
+- Redis is optional; the system runs correctly without it.
