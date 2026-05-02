@@ -23,6 +23,7 @@ import (
 	"github.com/example/go-ai-scheduler/internal/scheduler/engine"
 	schedulergrpc "github.com/example/go-ai-scheduler/internal/scheduler/grpcserver"
 	"github.com/example/go-ai-scheduler/internal/scheduler/health"
+	trendPkg "github.com/example/go-ai-scheduler/internal/ai/trend"
 	"github.com/example/go-ai-scheduler/internal/scheduler/leader"
 	"github.com/example/go-ai-scheduler/internal/scheduler/ratelimit"
 	"github.com/example/go-ai-scheduler/internal/scheduler/retry"
@@ -136,6 +137,23 @@ func main() {
 	go triggerLoop.Start(leaderCtx)
 	go retryLoop.Start(leaderCtx)
 	go cacheMgr.StartWarmLoop(leaderCtx, 10*time.Second)
+
+	// Daily AI health summary: compute snapshot and log structured report.
+	go func() {
+		for {
+			now := time.Now()
+			next := time.Date(now.Year(), now.Month(), now.Day()+1, 8, 0, 0, 0, now.Location())
+			time.Sleep(next.Sub(now))
+			workers, _ := resources.Repositories.Worker.ListWorkers(context.Background())
+			tasks, _ := resources.Repositories.Task.ListTasks(context.Background())
+			instances, _ := resources.Repositories.TaskInstance.ListInstancesByTimeRange(context.Background(), time.Now().Add(-24*time.Hour), time.Now(), 0, 0)
+			snap := trendPkg.ComputeSnapshot(workers, tasks, instances, 24)
+			l.Printf("daily health summary: workers=%d/%d load=%.1f%% tasks=%d/%d instances=%d failed=%d success=%d",
+				snap.OnlineWorkers, snap.WorkerCount, snap.AvgWorkerLoad*100,
+				snap.EnabledTasks, snap.TaskCount,
+				snap.TotalInstances, snap.FailedInstances, snap.SuccessInstances)
+		}
+	}()
 
 	healthLoop := health.NewChecker(workerService, l, 30*time.Second, 10*time.Second)
 	go healthLoop.Start(leaderCtx)

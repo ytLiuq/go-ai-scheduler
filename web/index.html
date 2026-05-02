@@ -1270,6 +1270,7 @@ tbody tr:hover{
             <button :class="{active: tab==='tasks'}" @click="tab='tasks';loadTasks()">任务</button>
             <button :class="{active: tab==='workers'}" @click="tab='workers';loadWorkers()">Worker</button>
             <button :class="{active: tab==='instances'}" @click="tab='instances';loadInstances()">实例</button>
+            <button :class="{active: tab==='dag'}" @click="tab='dag';loadDAG()">DAG</button>
             <button :class="{active: tab==='ai'}" @click="tab='ai';loadAIStatus();loadFailedInstances()">AI 工具</button>
             <button :class="{active: tab==='chat'}" @click="tab='chat';loadConversations()">AI 对话</button>
           </div>
@@ -1591,6 +1592,32 @@ tbody tr:hover{
               </table>
             </div>
             <div class="empty" v-else>当前没有实例数据。</div>
+          </div>
+        </template>
+
+        <template v-if="tab==='dag'">
+          <div class="panel panel-pad">
+            <h3>DAG 依赖图</h3>
+            <p style="color:var(--muted);margin-bottom:16px">任务依赖关系可视化，箭头从上游指向下游。</p>
+            <div v-if="dagNodes.length" style="overflow:auto;background:var(--bg);border-radius:8px;padding:16px">
+              <svg :width="dagWidth" :height="dagHeight" style="display:block">
+                <defs>
+                  <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+                    <polygon points="0 0, 10 3.5, 0 7" fill="var(--muted)"/>
+                  </marker>
+                </defs>
+                <line v-for="edge in dagEdges" :key="edge.from+'-'+edge.to"
+                  :x1="edge.x1" :y1="edge.y1" :x2="edge.x2" :y2="edge.y2"
+                  stroke="var(--muted)" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+                <g v-for="node in dagNodes" :key="node.id">
+                  <rect :x="node.x-60" :y="node.y-20" width="120" height="40" rx="6"
+                    :fill="node.status==='enabled'?'var(--accent)':'var(--muted)'" opacity="0.9"/>
+                  <text :x="node.x" :y="node.y-2" text-anchor="middle" fill="#fff" font-size="11" font-weight="bold">{{node.name}}</text>
+                  <text :x="node.x" :y="node.y+13" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-size="9">#{{node.id}} {{node.type}}</text>
+                </g>
+              </svg>
+            </div>
+            <div v-else class="result-box">暂无依赖关系数据</div>
           </div>
         </template>
 

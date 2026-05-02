@@ -161,6 +161,16 @@ func parseTaskID(path string) (int64, error) {
 	return strconv.ParseInt(idText, 10, 64)
 }
 
+// DAG handles GET /api/v1/tasks/dag — returns all tasks and their dependencies as a graph.
+func (h *TaskHandler) DAG(w http.ResponseWriter, r *http.Request) {
+	data, err := h.service.GetDAG(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, data)
+}
+
 func writeTaskServiceError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	switch {

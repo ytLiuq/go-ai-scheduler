@@ -15,6 +15,10 @@ createApp({
     const tasks = ref([]);
     const workers = ref([]);
     const instances = ref([]);
+    const dagNodes = ref([]);
+    const dagEdges = ref([]);
+    const dagWidth = ref(800);
+    const dagHeight = ref(400);
     const taskModal = ref(null);
     const nlTaskInput = ref('');
     const nlTaskLoading = ref(false);
@@ -258,6 +262,54 @@ createApp({
       } catch (e) {
         console.error(e);
       }
+    }
+
+    async function loadDAG() {
+      try {
+        const data = await api('/api/v1/tasks/dag');
+        const nodes = data || [];
+        dagNodes.value = [];
+        dagEdges.value = [];
+        if (!nodes.length) return;
+        // Layout: simple layered DAG. Roots at left, leaf nodes at right.
+        const colSpacing = 180, rowSpacing = 80;
+        const levels = {}; const positions = {}; const visited = new Set();
+        function assignLevel(id, lvl) {
+          if (visited.has(id) && (levels[id] || 0) >= lvl) return;
+          visited.add(id); levels[id] = Math.max(levels[id] || 0, lvl);
+          const node = nodes.find(n => n.id === id);
+          if (node) node.depends_on.forEach(d => assignLevel(d, lvl + 1));
+        }
+        nodes.forEach(n => { if (!n.depends_on.length) assignLevel(n.id, 0); });
+        nodes.forEach(n => { if (!visited.has(n.id)) assignLevel(n.id, 0); });
+        // Count nodes per level for vertical positioning.
+        const levelCounts = {};
+        Object.values(levels).forEach(l => { levelCounts[l] = (levelCounts[l] || 0) + 1; });
+        const levelIdx = {};
+        nodes.forEach(n => {
+          const lvl = levels[n.id] || 0;
+          const idx = levelIdx[lvl] || 0;
+          positions[n.id] = { x: lvl * colSpacing + 100, y: idx * rowSpacing + 50 };
+          levelIdx[lvl] = idx + 1;
+        });
+        // Build node list with positions.
+        dagNodes.value = nodes.map(n => ({
+          ...n, x: positions[n.id].x, y: positions[n.id].y
+        }));
+        // Build edges.
+        const edges = [];
+        nodes.forEach(n => {
+          n.depends_on.forEach(d => {
+            const from = positions[d], to = positions[n.id];
+            if (from && to) edges.push({ from: d, to: n.id, x1: from.x+60, y1: from.y, x2: to.x-60, y2: to.y });
+          });
+        });
+        dagEdges.value = edges;
+        const maxLvl = Math.max(...Object.keys(levelCounts).map(Number), 0);
+        const maxRows = Math.max(...Object.values(levelCounts), 1);
+        dagWidth.value = (maxLvl + 1) * colSpacing + 80;
+        dagHeight.value = maxRows * rowSpacing + 40;
+      } catch (e) { console.error('load DAG:', e); }
     }
 
     async function loadAIStatus() {
@@ -763,6 +815,11 @@ createApp({
       loadTasks,
       loadWorkers,
       loadInstances,
+      loadDAG,
+      dagNodes,
+      dagEdges,
+      dagWidth,
+      dagHeight,
       loadAIStatus,
       showTaskModal,
       nlTaskInput,

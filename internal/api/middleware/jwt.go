@@ -38,10 +38,11 @@ func SetJWTSecret(secret []byte) {
 
 // Claims carried in a JWT token.
 type Claims struct {
-	Sub  string `json:"sub"`
-	Role string `json:"role"`
-	Iat  int64  `json:"iat"`
-	Exp  int64  `json:"exp"`
+	Sub      string `json:"sub"`
+	Role     string `json:"role"`
+	TenantID int64  `json:"tenant_id"`
+	Iat      int64  `json:"iat"`
+	Exp      int64  `json:"exp"`
 }
 
 // SignToken creates a signed JWT token.

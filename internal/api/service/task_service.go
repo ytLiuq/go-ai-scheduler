@@ -313,3 +313,31 @@ func buildTask(id int64, req TaskUpsertRequest) (*model.Task, error) {
 		TenantID:        req.TenantID,
 	}, nil
 }
+
+// DAGNode represents a task in the dependency graph.
+type DAGNode struct {
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
+	Type    string `json:"type"`
+	Status  string `json:"status"`
+	DependsOn []int64 `json:"depends_on"`
+}
+
+// GetDAG returns all tasks and their dependencies for DAG visualization.
+func (s *TaskService) GetDAG(ctx context.Context) ([]DAGNode, error) {
+	tasks, err := s.ListTasks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	nodes := make([]DAGNode, 0, len(tasks))
+	for _, t := range tasks {
+		deps, _ := s.repo.ListUpstreamDeps(ctx, t.ID)
+		if deps == nil {
+			deps = []int64{}
+		}
+		nodes = append(nodes, DAGNode{
+			ID: t.ID, Name: t.Name, Type: t.Type, Status: t.Status, DependsOn: deps,
+		})
+	}
+	return nodes, nil
+}

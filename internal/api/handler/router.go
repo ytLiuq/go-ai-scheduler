@@ -22,6 +22,7 @@ func NewSchedulerRouter(workerHandler *WorkerHandler, taskRuntimeHandler *TaskRu
 	mux.HandleFunc("/api/v1/workers/heartbeat", workerHandler.Heartbeat)
 	mux.HandleFunc("/api/v1/task-instances/report", taskRuntimeHandler.Report)
 	mux.HandleFunc("POST /api/v1/events/publish", eventHandler.Publish)
+	mux.HandleFunc("POST /api/v1/events/receive", eventHandler.Publish)
 	mux.HandleFunc("POST /api/v1/task-instances/cancel", taskRuntimeHandler.Cancel)
 	mux.HandleFunc("POST /api/v1/task-instances/ack", taskRuntimeHandler.Ack)
 	mux.HandleFunc("GET /api/v1/worker-loads", workerLoadHandler.List)
@@ -41,6 +42,7 @@ func NewAPIRouter(authHandler *AuthHandler, workerHandler *WorkerHandler, taskHa
 	mux.HandleFunc("GET /api/v1/workers", requireAuth("viewer", workerHandler.List))
 	mux.HandleFunc("GET /api/v1/workers/", requireAuth("viewer", workerHandler.Get))
 	mux.HandleFunc("GET /api/v1/tasks", requireAuth("viewer", taskHandler.List))
+	mux.HandleFunc("GET /api/v1/tasks/dag", requireAuth("viewer", taskHandler.DAG))
 	mux.HandleFunc("GET /api/v1/tasks/", requireAuth("viewer", taskHandler.GetOrUpdate))
 	mux.HandleFunc("POST /api/v1/tasks", requireAuth("operator", taskHandler.List))       // POST = create
 	mux.HandleFunc("PUT /api/v1/tasks/", requireAuth("operator", taskHandler.GetOrUpdate)) // PUT = update
@@ -63,6 +65,9 @@ func NewAPIRouter(authHandler *AuthHandler, workerHandler *WorkerHandler, taskHa
 	mux.HandleFunc("POST /api/v1/ai/chat", requireAuth("viewer", proxyAIHandler("chat")))
 	mux.HandleFunc("GET /api/v1/ai/chat/ws", requireAuth("viewer", proxyWSHandler("chat/ws")))
 	mux.HandleFunc("GET /api/v1/ai/conversations", requireAuth("viewer", proxyAIHandler(http.MethodGet, "conversations")))
+	// Webhook endpoint for external event triggers (proxied to scheduler).
+	mux.HandleFunc("POST /api/v1/events/receive", requireAuth("operator", proxySchedulerHandler("events/publish")))
+
 	mux.HandleFunc("GET /api/v1/ai/conversations/", requireAuth("viewer", func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.TrimPrefix(r.URL.Path, "/api/v1/ai/conversations/")
 		proxyAIHandler(http.MethodGet, "conversations/"+rest)(w, r)
@@ -108,6 +113,11 @@ func requireAuth(minimumRole string, next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		// Inject tenant ID into context.
+		if claims.TenantID > 0 {
+			ctx := tenant.WithTenant(r.Context(), claims.TenantID)
+			r = r.WithContext(ctx)
+		}
 		next(w, r)
 	}
 }
@@ -165,6 +175,38 @@ func proxyAIHandler(methodOrPath string, maybePath ...string) http.HandlerFunc {
 		}
 		w.WriteHeader(resp.StatusCode)
 		_, _ = io.Copy(w, resp.Body)
+	}
+}
+
+// proxySchedulerHandler returns a handler that reverse-proxies to the scheduler service.
+func proxySchedulerHandler(path string) http.HandlerFunc {
+	baseURL := os.Getenv("SCHEDULER_URL")
+	if baseURL == "" {
+		baseURL = "http://127.0.0.1:8081"
+	}
+	target := strings.TrimRight(baseURL, "/") + "/api/v1/" + path
+	return func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		r.Body.Close()
+		proxyReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, io.NopCloser(strings.NewReader(string(body))))
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "proxy error"})
+			return
+		}
+		proxyReq.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(proxyReq)
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "scheduler unreachable"})
+			return
+		}
+		defer resp.Body.Close()
+		for k, vs := range resp.Header {
+			for _, v := range vs {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
 	}
 }
 

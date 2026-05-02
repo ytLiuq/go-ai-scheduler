@@ -638,6 +638,153 @@ func truncateStr(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
+// --------------- retry_failed_instance ---------------
+
+type retryFailedInstanceTool struct{ bundle *repo.Bundle }
+
+func (t *retryFailedInstanceTool) Definition() adapter.Tool {
+	return adapter.Tool{
+		Type: "function",
+		Function: adapter.FunctionDef{
+			Name:        "retry_failed_instance",
+			Description: "重试一个失败的实例。会根据原任务的配置重新创建实例并加入重试队列。",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"instance_id": map[string]any{"type": "integer", "description": "失败的实例ID"},
+				},
+				"required": []string{"instance_id"},
+			},
+		},
+	}
+}
+
+func (t *retryFailedInstanceTool) Execute(ctx context.Context, args json.RawMessage) (any, error) {
+	var p struct{ InstanceID int64 `json:"instance_id"` }
+	_ = json.Unmarshal(args, &p)
+	if p.InstanceID <= 0 {
+		return nil, fmt.Errorf("instance_id is required")
+	}
+	inst, err := t.bundle.TaskInstance.GetInstance(ctx, p.InstanceID)
+	if err != nil {
+		return nil, fmt.Errorf("get instance: %w", err)
+	}
+	if inst.Status != "failed" && inst.Status != "timeout" {
+		return map[string]any{"message": fmt.Sprintf("实例状态为 %s，无需重试", inst.Status)}, nil
+	}
+	task, err := t.bundle.Task.GetTask(ctx, inst.TaskID)
+	if err != nil {
+		return nil, fmt.Errorf("get task: %w", err)
+	}
+	newInst := &model.TaskInstance{
+		TaskID:             task.ID,
+		ScheduleInstanceID: fmt.Sprintf("%s-retry-%d", inst.ScheduleInstanceID, inst.RetryCount+1),
+		TriggerTime:        time.Now(),
+		Status:             "pending",
+		RetryCount:         inst.RetryCount + 1,
+		ShardNo:            inst.ShardNo,
+		ShardTotal:         inst.ShardTotal,
+	}
+	if err := t.bundle.TaskInstance.CreateInstance(ctx, newInst); err != nil {
+		return nil, fmt.Errorf("create retry instance: %w", err)
+	}
+	return map[string]any{
+		"instance_id": newInst.ID,
+		"task_name":   task.Name,
+		"message":     fmt.Sprintf("已为任务 %s 创建重试实例", task.Name),
+	}, nil
+}
+
+// --------------- delete_task ---------------
+
+type deleteTaskAgentTool struct{ bundle *repo.Bundle }
+
+func (t *deleteTaskAgentTool) Definition() adapter.Tool {
+	return adapter.Tool{
+		Type: "function",
+		Function: adapter.FunctionDef{
+			Name:        "delete_task",
+			Description: "删除一个任务及其所有关联实例。不可逆操作，需要用户确认。",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"task_id": map[string]any{"type": "integer", "description": "要删除的任务ID"},
+				},
+				"required": []string{"task_id"},
+			},
+		},
+	}
+}
+
+func (t *deleteTaskAgentTool) Execute(ctx context.Context, args json.RawMessage) (any, error) {
+	var p struct{ TaskID int64 `json:"task_id"` }
+	_ = json.Unmarshal(args, &p)
+	if p.TaskID <= 0 {
+		return nil, fmt.Errorf("task_id is required")
+	}
+	task, err := t.bundle.Task.GetTask(ctx, p.TaskID)
+	if err != nil {
+		return nil, fmt.Errorf("get task: %w", err)
+	}
+	if err := t.bundle.Task.DeleteTask(ctx, p.TaskID); err != nil {
+		return nil, fmt.Errorf("delete task: %w", err)
+	}
+	return map[string]any{
+		"task_name": task.Name,
+		"message":   fmt.Sprintf("任务 %s 已删除", task.Name),
+	}, nil
+}
+
+// --------------- get_worker_load_history ---------------
+
+type getWorkerLoadHistoryTool struct{ bundle *repo.Bundle }
+
+func (t *getWorkerLoadHistoryTool) Definition() adapter.Tool {
+	return adapter.Tool{
+		Type: "function",
+		Function: adapter.FunctionDef{
+			Name:        "get_worker_load_history",
+			Description: "查询 worker 负载历史数据，可用于分析负载趋势。返回最近若干小时的负载采样数据。",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"worker_id": map[string]any{"type": "string", "description": "Worker ID，留空则返回所有 worker"},
+					"hours":     map[string]any{"type": "integer", "description": "查询最近多少小时的数据，默认24"},
+				},
+			},
+		},
+	}
+}
+
+func (t *getWorkerLoadHistoryTool) Execute(ctx context.Context, args json.RawMessage) (any, error) {
+	var p struct {
+		WorkerID string `json:"worker_id"`
+		Hours    int    `json:"hours"`
+	}
+	_ = json.Unmarshal(args, &p)
+	if p.Hours <= 0 {
+		p.Hours = 24
+	}
+	from := time.Now().Add(-time.Duration(p.Hours) * time.Hour)
+	snapshots, err := t.bundle.WorkerLoad.ListSnapshots(ctx, p.WorkerID, from, time.Now(), 200)
+	if err != nil {
+		return nil, fmt.Errorf("list snapshots: %w", err)
+	}
+	result := make([]map[string]any, 0, len(snapshots))
+	for _, s := range snapshots {
+		result = append(result, map[string]any{
+			"worker_id":       s.WorkerID,
+			"current_load":    s.CurrentLoad,
+			"max_concurrency": s.MaxConcurrency,
+			"status":          s.Status,
+			"recorded_at":     s.RecordedAt.Format(time.RFC3339),
+		})
+	}
+	return map[string]any{"snapshots": result, "count": len(result)}, nil
+}
+
+// --------------- helpers ---------------
+
 // AnalyzeInstance analyzes a failed instance using LLM and returns the analysis.
 // This is called externally by the agent when it has an LLM adapter available.
 func AnalyzeInstance(llm *adapter.LLMAdapter, inst *model.TaskInstance, taskType string) (*loganalysis.AnalysisResponse, error) {

@@ -60,5 +60,8 @@ func AllTools(bundle *repo.Bundle) []Tool {
 		&createTaskTool{bundle: bundle},
 		&triggerTaskTool{bundle: bundle},
 		&pauseTaskTool{bundle: bundle},
+		&retryFailedInstanceTool{bundle: bundle},
+		&deleteTaskAgentTool{bundle: bundle},
+		&getWorkerLoadHistoryTool{bundle: bundle},
 	}
 }
