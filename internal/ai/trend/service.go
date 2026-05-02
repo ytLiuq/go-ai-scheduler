@@ -40,6 +40,10 @@ type DataSnapshot struct {
 	TaskCount        int     `json:"task_count"`
 	EnabledTasks     int     `json:"enabled_tasks"`
 	TimeWindowHours  int     `json:"time_window_hours"`
+	// Historical load samples for trend detection.
+	TotalLoadSamples     int     `json:"total_load_samples"`
+	AvgLoadOverWindow    float64 `json:"avg_load_over_window"`
+	LoadDirection        string  `json:"load_direction"` // increasing, decreasing, stable
 }
 
 // TrendResponse is the full LLM response.
@@ -110,6 +114,10 @@ Worker stats:
 - Total workers: %d (online: %d)
 - Average worker load: %.2f%%
 
+Historical load data (%d samples collected over the window):
+- Average load over window: %.2f%%
+- Load direction: %s
+
 Task stats:
 - Total tasks: %d (enabled: %d)
 
@@ -120,6 +128,7 @@ Instance stats (within window):
 - Pending/in-flight: %d`,
 		snapshot.TimeWindowHours,
 		snapshot.WorkerCount, snapshot.OnlineWorkers, snapshot.AvgWorkerLoad*100,
+		snapshot.TotalLoadSamples, snapshot.AvgLoadOverWindow*100, snapshot.LoadDirection,
 		snapshot.TaskCount, snapshot.EnabledTasks,
 		snapshot.TotalInstances, snapshot.FailedInstances, snapshot.SuccessInstances, snapshot.PendingInstances)
 

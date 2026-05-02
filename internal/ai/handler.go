@@ -483,6 +483,41 @@ func analyzeTrend(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapte
 
 	snapshot := trend.ComputeSnapshot(workers, tasks, instances, req.TimeWindowHours)
 
+	// Enrich with historical load data.
+	if repos.WorkerLoad != nil {
+		if snapshots, err := repos.WorkerLoad.ListSnapshots(r.Context(), "", windowFrom, time.Now(), 0); err == nil && len(snapshots) > 0 {
+			snapshot.TotalLoadSamples = len(snapshots)
+			var totalLoad float64
+			for _, s := range snapshots {
+				if s.MaxConcurrency > 0 {
+					totalLoad += float64(s.CurrentLoad) / float64(s.MaxConcurrency)
+				}
+			}
+			if len(snapshots) > 0 {
+				snapshot.AvgLoadOverWindow = totalLoad / float64(len(snapshots))
+			}
+			// Compare first and last samples for direction.
+			first := snapshots[len(snapshots)-1]
+			last := snapshots[0]
+			firstLoad := 0.0
+			lastLoad := 0.0
+			if first.MaxConcurrency > 0 {
+				firstLoad = float64(first.CurrentLoad) / float64(first.MaxConcurrency)
+			}
+			if last.MaxConcurrency > 0 {
+				lastLoad = float64(last.CurrentLoad) / float64(last.MaxConcurrency)
+			}
+			diff := lastLoad - firstLoad
+			if diff > 0.05 {
+				snapshot.LoadDirection = "increasing"
+			} else if diff < -0.05 {
+				snapshot.LoadDirection = "decreasing"
+			} else {
+				snapshot.LoadDirection = "stable"
+			}
+		}
+	}
+
 	result, err := trend.AnalyzeWithLLM(r.Context(), llm, snapshot)
 	if err != nil {
 		metrics.DefaultRegistry.IncCounter("ai_requests_total", map[string]string{"endpoint": "trend_analysis", "result": "error"})

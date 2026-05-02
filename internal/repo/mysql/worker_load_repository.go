@@ -34,16 +34,28 @@ func (r *WorkerLoadRepository) CreateSnapshot(ctx context.Context, snapshot *mod
 	return nil
 }
 
-// ListSnapshots returns load snapshots for a worker within a time range.
+// ListSnapshots returns load snapshots for a worker (or all if empty) within a time range.
 func (r *WorkerLoadRepository) ListSnapshots(ctx context.Context, workerID string, from, to time.Time, limit int) ([]*model.WorkerLoadSnapshot, error) {
-	const query = `
-		SELECT id, worker_id, current_load, max_concurrency, status, recorded_at
-		FROM worker_load_snapshot
-		WHERE worker_id = ? AND recorded_at >= ? AND recorded_at <= ?
-		ORDER BY recorded_at DESC
-		LIMIT ?
-	`
-	rows, err := r.db.QueryContext(ctx, query, workerID, from, to, limit)
+	var query string
+	var args []interface{}
+	if workerID != "" {
+		query = `SELECT id, worker_id, current_load, max_concurrency, status, recorded_at
+			FROM worker_load_snapshot
+			WHERE worker_id = ? AND recorded_at >= ? AND recorded_at <= ?
+			ORDER BY recorded_at DESC`
+		args = []interface{}{workerID, from, to}
+	} else {
+		query = `SELECT id, worker_id, current_load, max_concurrency, status, recorded_at
+			FROM worker_load_snapshot
+			WHERE recorded_at >= ? AND recorded_at <= ?
+			ORDER BY recorded_at DESC`
+		args = []interface{}{from, to}
+	}
+	if limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, limit)
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list worker load snapshots: %w", err)
 	}
