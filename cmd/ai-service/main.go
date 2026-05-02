@@ -31,6 +31,17 @@ func main() {
 	llm := adapter.New(llmConfig)
 	if llm != nil && llm.Enabled() {
 		l.Printf("LLM adapter configured: endpoint=%s model=%s", llmConfig.Endpoint, llmConfig.Model)
+		// Configure fallback LLM if env vars are set.
+		fbCfg := adapter.Config{
+			Endpoint: os.Getenv("LLM_FALLBACK_ENDPOINT"),
+			APIKey:   os.Getenv("LLM_FALLBACK_API_KEY"),
+			Model:    defaultStr(os.Getenv("LLM_FALLBACK_MODEL"), "gpt-4o"),
+			Timeout:  30 * time.Second,
+		}
+		if fb := adapter.New(fbCfg); fb != nil {
+			llm.SetFallback(fb)
+			l.Printf("LLM fallback configured: endpoint=%s model=%s", fbCfg.Endpoint, fbCfg.Model)
+		}
 	} else {
 		l.Printf("LLM adapter not configured, running heuristics-only mode")
 	}

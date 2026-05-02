@@ -26,8 +26,16 @@ type LLMAdapter struct {
 	apiKey          string
 	model           string
 	httpClient      *http.Client
+	fallback        *LLMAdapter
 	totalPrompt     atomic.Int64
 	totalCompletion atomic.Int64
+}
+
+// SetFallback configures a fallback adapter used when the primary fails.
+func (a *LLMAdapter) SetFallback(fb *LLMAdapter) {
+	if a != nil && fb != nil && fb.Enabled() {
+		a.fallback = fb
+	}
 }
 
 // Config configures the LLM adapter.
@@ -204,6 +212,14 @@ func (a *LLMAdapter) Complete(ctx context.Context, systemPrompt, userPrompt stri
 
 // CompleteWithTools sends a non-streaming request with tools; returns content + tool calls.
 func (a *LLMAdapter) CompleteWithTools(ctx context.Context, messages []Message, tools []Tool) (string, []ToolCall, error) {
+	content, toolCalls, err := a.doCompleteWithTools(ctx, messages, tools)
+	if err != nil && a.fallback != nil && a.fallback.Enabled() {
+		content, toolCalls, err = a.fallback.doCompleteWithTools(ctx, messages, tools)
+	}
+	return content, toolCalls, err
+}
+
+func (a *LLMAdapter) doCompleteWithTools(ctx context.Context, messages []Message, tools []Tool) (string, []ToolCall, error) {
 	if !a.Enabled() {
 		return "", nil, fmt.Errorf("llm adapter not configured")
 	}
@@ -250,7 +266,7 @@ func (a *LLMAdapter) CompleteWithTools(ctx context.Context, messages []Message, 
 		return "", nil, fmt.Errorf("llm returned empty choices")
 	}
 	choice := chatResp.Choices[0]
-		a.recordUsage(chatResp.Usage)
+	a.recordUsage(chatResp.Usage)
 	return choice.Message.Content, choice.Message.ToolCalls, nil
 }
 
@@ -409,6 +425,14 @@ func (a *LLMAdapter) runStreamWithClient(ctx context.Context, client *http.Clien
 }
 
 func (a *LLMAdapter) completeMessages(ctx context.Context, messages []Message) (string, error) {
+	result, err := a.doComplete(ctx, messages)
+	if err != nil && a.fallback != nil && a.fallback.Enabled() {
+		result, err = a.fallback.doComplete(ctx, messages)
+	}
+	return result, err
+}
+
+func (a *LLMAdapter) doComplete(ctx context.Context, messages []Message) (string, error) {
 	reqBody := ChatRequest{
 		Model:    a.model,
 		Messages: messages,
