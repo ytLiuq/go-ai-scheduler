@@ -45,6 +45,7 @@ type TaskInstanceRepository interface {
 // AIAnalysisRepository persists AI analysis audit records.
 type AIAnalysisRepository interface {
 	CreateRecord(ctx context.Context, record *model.AIAnalysisRecord) error
+	DeleteOldRecords(ctx context.Context, before time.Time) (int64, error)
 }
 
 // WorkerRepository persists worker liveness and runtime metadata.

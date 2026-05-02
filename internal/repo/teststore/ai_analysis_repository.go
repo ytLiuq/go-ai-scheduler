@@ -33,3 +33,18 @@ func (r *AIAnalysisRepository) CreateRecord(_ context.Context, record *model.AIA
 	r.nextID++
 	return nil
 }
+
+// DeleteOldRecords removes records older than the given time.
+func (r *AIAnalysisRepository) DeleteOldRecords(_ context.Context, before time.Time) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var deleted int64
+	for id, rec := range r.records {
+		if rec.CreatedAt.Before(before) {
+			delete(r.records, id)
+			deleted++
+		}
+	}
+	return deleted, nil
+}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"strconv"
@@ -45,6 +46,26 @@ func main() {
 		Addr:    cfg.HTTPAddr,
 		Handler: ai.NewRouter(llm, resources.Repositories, registry, store, rateLimitRPM),
 	}
+
+	// Start periodic cleanup of old AI analysis records (retain 90 days).
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		cutoff := time.Now().Add(-90 * 24 * time.Hour)
+		if n, err := resources.Repositories.AIAnalysis.DeleteOldRecords(context.Background(), cutoff); err != nil {
+			l.Printf("ai analysis cleanup error: %v", err)
+		} else if n > 0 {
+			l.Printf("ai analysis cleanup: deleted %d records older than 90 days", n)
+		}
+		for range ticker.C {
+			cutoff := time.Now().Add(-90 * 24 * time.Hour)
+			if n, err := resources.Repositories.AIAnalysis.DeleteOldRecords(context.Background(), cutoff); err != nil {
+				l.Printf("ai analysis cleanup error: %v", err)
+			} else if n > 0 {
+				l.Printf("ai analysis cleanup: deleted %d records older than 90 days", n)
+			}
+		}
+	}()
 
 	l.Printf("starting ai-service http server on %s", cfg.HTTPAddr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {

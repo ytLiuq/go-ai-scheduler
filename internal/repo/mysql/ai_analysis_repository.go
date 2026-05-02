@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/example/go-ai-scheduler/internal/model"
 )
@@ -40,4 +41,15 @@ func (r *AIAnalysisRepository) CreateRecord(ctx context.Context, record *model.A
 	}
 	record.ID = id
 	return nil
+}
+
+// DeleteOldRecords removes records older than the given time.
+func (r *AIAnalysisRepository) DeleteOldRecords(ctx context.Context, before time.Time) (int64, error) {
+	result, err := r.db.ExecContext(ctx,
+		`DELETE FROM ai_analysis_record WHERE created_at < ?`, before,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("delete old ai analysis records: %w", err)
+	}
+	return result.RowsAffected()
 }
