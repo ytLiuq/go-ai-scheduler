@@ -34,7 +34,7 @@ createApp({
       retry_policy: 'fixed_interval',
       route_strategy: 'least_loaded'
     });
-    const aiLoading = reactive({ log: false, autoAdvisor: false, status: false, predict: false, trend: false });
+    const aiLoading = reactive({ log: false, autoAdvisor: false, status: false, trend: false });
     const aiStatus = reactive({
       status: 'unknown',
       service: 'ai-service',
@@ -57,7 +57,6 @@ createApp({
       failedOptions: []
     });
     const aiAutoAdvisor = reactive({ result: '', resultObj: null });
-    const aiPredict = reactive({ taskId: null, result: '', resultObj: null });
     const aiTrend = reactive({ timeWindowHours: 24, result: '', resultObj: null });
 
     // --- Chat state ---
@@ -160,8 +159,8 @@ createApp({
     }
 
     const roleLabel = computed(() => {
-      const labels = { admin: 'Admin', operator: 'Operator', viewer: 'Viewer' };
-      return labels[role.value] || role.value || 'Guest';
+      const labels = { admin: '管理员', operator: '运维', viewer: '只读' };
+      return labels[role.value] || role.value || '访客';
     });
 
     const failedInstances = computed(() => instances.value.filter(i => i.status === 'failed').length);
@@ -192,10 +191,10 @@ createApp({
     const instanceFailureRate = computed(() => safePercent(failedInstances.value, instances.value.length));
 
     const dashboardStats = computed(() => [
-      { label: 'Total Tasks', value: stats.tasks, note: '控制台已加载的任务总数', icon: 'T' },
-      { label: 'Recent Instances', value: stats.instances, note: '最近实例数据样本', icon: 'I' },
-      { label: 'Online Workers', value: stats.workers, note: workers.value.length ? '节点在线状态已汇总' : '尚未发现 Worker', icon: 'W' },
-      { label: 'Failed Runs', value: failedInstances.value, note: '最近实例中的失败次数', icon: '!' }
+      { label: '任务总数', value: stats.tasks, note: '控制台已加载的任务总数', icon: 'T' },
+      { label: '近期实例', value: stats.instances, note: '最近实例数据样本', icon: 'I' },
+      { label: '在线 Worker', value: stats.workers, note: workers.value.length ? '节点在线状态已汇总' : '尚未发现 Worker', icon: 'W' },
+      { label: '失败次数', value: failedInstances.value, note: '最近实例中的失败次数', icon: '!' }
     ]);
 
     async function doLogin() {
@@ -209,7 +208,7 @@ createApp({
         role.value = resp.role;
         localStorage.setItem('scheduler_token', resp.token);
         localStorage.setItem('scheduler_role', resp.role);
-        await Promise.all([loadTasks(), loadWorkers(), loadInstances(), loadAIStatus()]);
+        await Promise.all([loadTasks(), loadWorkers(), loadInstances(true), loadAIStatus()]);
       } catch (e) {
         loginError.value = e.message;
       }
@@ -243,61 +242,84 @@ createApp({
       }
     }
 
-    async function loadInstances() {
+    const instancePage = ref(1);
+    const instancePageSize = 20;
+    const instanceTotal = ref(0);
+
+    const instanceTotalPages = computed(() => Math.max(1, Math.ceil(instanceTotal.value / instancePageSize)));
+
+    async function loadInstances(page) {
+      const p = page || instancePage.value;
+      if (p < 1 || p > instanceTotalPages.value) return;
       try {
-        const data = await api('/api/v1/task-instances?limit=50');
-        instances.value = (data || []).map(normalizeInstance);
-        stats.instances = instances.value.length;
+        const offset = (p - 1) * instancePageSize;
+        const data = await api('/api/v1/task-instances?limit=' + instancePageSize + '&offset=' + offset);
+        instances.value = (data.instances || data || []).map(normalizeInstance);
+        instanceTotal.value = data.total || instances.value.length;
+        instancePage.value = p;
+        stats.instances = instanceTotal.value;
       } catch (e) {
         console.error(e);
       }
     }
 
+    function goInstancePage(p) {
+      if (p >= 1 && p <= instanceTotalPages.value && p !== instancePage.value) {
+        loadInstances(p);
+      }
+    }
+
+    async function refreshInstances() {
+      await loadInstances(1);
+    }
+
+    const dagLevels = ref([]);
+    const dagNodeMap = ref({});
+
     async function loadDAG() {
       try {
         const data = await api('/api/v1/tasks/dag');
         const nodes = data || [];
-        dagNodes.value = [];
+        dagNodes.value = nodes;
+        dagLevels.value = [];
         dagEdges.value = [];
         if (!nodes.length) return;
-        // Layout: simple layered DAG. Roots at left, leaf nodes at right.
-        const colSpacing = 180, rowSpacing = 80;
-        const levels = {}; const positions = {}; const visited = new Set();
-        function assignLevel(id, lvl) {
-          if (visited.has(id) && (levels[id] || 0) >= lvl) return;
-          visited.add(id); levels[id] = Math.max(levels[id] || 0, lvl);
-          const node = nodes.find(n => n.id === id);
-          if (node) node.depends_on.forEach(d => assignLevel(d, lvl + 1));
-        }
-        nodes.forEach(n => { if (!n.depends_on.length) assignLevel(n.id, 0); });
-        nodes.forEach(n => { if (!visited.has(n.id)) assignLevel(n.id, 0); });
-        // Count nodes per level for vertical positioning.
-        const levelCounts = {};
-        Object.values(levels).forEach(l => { levelCounts[l] = (levelCounts[l] || 0) + 1; });
-        const levelIdx = {};
+        const map = {};
+        nodes.forEach(n => { map[n.id] = n; });
+        dagNodeMap.value = map;
+        const downstreamCount = {};
+        nodes.forEach(n => { downstreamCount[n.id] = 0; });
         nodes.forEach(n => {
-          const lvl = levels[n.id] || 0;
-          const idx = levelIdx[lvl] || 0;
-          positions[n.id] = { x: lvl * colSpacing + 100, y: idx * rowSpacing + 50 };
-          levelIdx[lvl] = idx + 1;
-        });
-        // Build node list with positions.
-        dagNodes.value = nodes.map(n => ({
-          ...n, x: positions[n.id].x, y: positions[n.id].y
-        }));
-        // Build edges.
-        const edges = [];
-        nodes.forEach(n => {
-          n.depends_on.forEach(d => {
-            const from = positions[d], to = positions[n.id];
-            if (from && to) edges.push({ from: d, to: n.id, x1: from.x+60, y1: from.y, x2: to.x-60, y2: to.y });
+          (n.depends_on || []).forEach(id => {
+            downstreamCount[id] = (downstreamCount[id] || 0) + 1;
           });
         });
-        dagEdges.value = edges;
-        const maxLvl = Math.max(...Object.keys(levelCounts).map(Number), 0);
-        const maxRows = Math.max(...Object.values(levelCounts), 1);
-        dagWidth.value = (maxLvl + 1) * colSpacing + 80;
-        dagHeight.value = maxRows * rowSpacing + 40;
+        nodes.forEach(n => {
+          n.depNames = (n.depends_on || []).map(id => (map[id] ? map[id].name : '#'+id)).join(', ');
+          n.depCount = (n.depends_on || []).length;
+          n.downstreamCount = downstreamCount[n.id] || 0;
+        });
+        const levels = {};
+        const visiting = new Set();
+        function resolveLevel(id) {
+          if (levels[id] !== undefined) return levels[id];
+          if (visiting.has(id)) return 0;
+          visiting.add(id);
+          const node = map[id];
+          const deps = node && node.depends_on ? node.depends_on : [];
+          levels[id] = deps.length ? Math.max(...deps.map(resolveLevel)) + 1 : 0;
+          visiting.delete(id);
+          return levels[id];
+        }
+        nodes.forEach(n => resolveLevel(n.id));
+        const maxLvl = Math.max(0, ...Object.values(levels));
+        const grouped = [];
+        for (let l = 0; l <= maxLvl; l++) {
+          const lvNodes = nodes.filter(n => (levels[n.id] || 0) === l);
+          if (lvNodes.length) grouped.push(lvNodes);
+        }
+        dagLevels.value = grouped;
+        dagEdges.value = [];
       } catch (e) { console.error('load DAG:', e); }
     }
 
@@ -413,13 +435,13 @@ createApp({
 
     async function triggerTask(task) {
       await api('/api/v1/tasks/' + task.id + '/trigger', 'POST');
-      alert('Task triggered');
+      alert('任务已触发');
     }
 
     async function deleteTask(task) {
-      if (!confirm('Delete task #' + task.id + ' ' + task.name + '?')) return;
+      if (!confirm('确定删除任务 #' + task.id + ' ' + task.name + ' 吗？')) return;
       await api('/api/v1/tasks/' + task.id, 'DELETE');
-      await Promise.all([loadTasks(), loadInstances()]);
+      await Promise.all([loadTasks(), loadInstances(true)]);
     }
 
     function formatResult(data) {
@@ -438,10 +460,10 @@ createApp({
       try {
         const a = typeof raw === 'string' ? JSON.parse(raw) : raw;
         return (a.summary || '') +
-          '\nSeverity: ' + (a.severity || '--') +
-          '\nRoot cause: ' + (a.root_cause || '--') +
-          '\nFix: ' + (a.fix || '--') +
-          '\nConfidence: ' + (typeof a.confidence === 'number' ? Math.round(a.confidence * 100) + '%' : '--');
+          '\n严重程度: ' + (a.severity || '--') +
+          '\n根因: ' + (a.root_cause || '--') +
+          '\n修复: ' + (a.fix || '--') +
+          '\n置信度: ' + (typeof a.confidence === 'number' ? Math.round(a.confidence * 100) + '%' : '--');
       } catch { return raw; }
     }
 
@@ -455,7 +477,8 @@ createApp({
     }
 
     function taskStatusText(status) {
-      return status === 'enabled' ? 'Enabled' : status || '--';
+      const map = { enabled: '已启用', disabled: '已禁用', paused: '已暂停' };
+      return map[status] || status || '--';
     }
 
     function workerStatusClass(status) {
@@ -463,7 +486,8 @@ createApp({
     }
 
     function workerStatusText(status) {
-      return status === 'online' ? 'Online' : status || '--';
+      const map = { online: '在线', offline: '离线', busy: '繁忙' };
+      return map[status] || status || '--';
     }
 
     function instanceStatusClass(status) {
@@ -474,7 +498,8 @@ createApp({
     }
 
     function instanceStatusText(status) {
-      return status || '--';
+      const map = { pending: '等待中', running: '运行中', success: '成功', failed: '失败', cancelled: '已取消', retrying: '重试中' };
+      return map[status] || status || '--';
     }
 
     function workerLoadLabel(worker) {
@@ -497,10 +522,31 @@ createApp({
         aiLog.result = formatResult(data);
       } catch (e) {
         aiLog.resultObj = null;
-        aiLog.result = 'Error: ' + e.message;
+        aiLog.result = '错误: ' + e.message;
       } finally {
         aiLoading.log = false;
       }
+    }
+
+    async function analyzeInstance(instance) {
+      const i = instance;
+      if (!i.error_message && !i.error_code) {
+        alert('该实例没有错误信息可供分析');
+        return;
+      }
+      aiLog.log = i.error_message || '';
+      aiLog.error_code = i.error_code || '';
+      aiLog.retry_count = i.retry_count || 0;
+      aiLog.task_type = '';
+      aiLog.instanceId = i.id;
+      aiLog.result = '';
+      aiLog.resultObj = null;
+      tab.value = 'ai';
+      setTimeout(() => {
+        const el = document.getElementById('log-result');
+        if (el) el.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+      runLogAnalysis();
     }
 
     function onSelectFailedInstance() {
@@ -516,7 +562,8 @@ createApp({
     async function loadFailedInstances() {
       try {
         const data = await api('/api/v1/task-instances?status=failed&limit=20');
-        aiLog.failedOptions = (data || []).map(normalizeInstance).slice(0, 20);
+        const list = data.instances || data || [];
+        aiLog.failedOptions = list.map(normalizeInstance).slice(0, 20);
       } catch (e) {
         console.error('load failed instances:', e);
         aiLog.failedOptions = [];
@@ -533,25 +580,9 @@ createApp({
         aiAutoAdvisor.result = formatResult(data);
       } catch (e) {
         aiAutoAdvisor.resultObj = null;
-        aiAutoAdvisor.result = 'Error: ' + e.message;
+        aiAutoAdvisor.result = '错误: ' + e.message;
       } finally {
         aiLoading.autoAdvisor = false;
-      }
-    }
-
-    async function runPredictDuration() {
-      if (!aiPredict.taskId) return;
-      aiLoading.predict = true;
-      aiPredict.resultObj = null;
-      try {
-        const data = await api('/api/v1/ai/task/predict-duration', 'POST', { task_id: aiPredict.taskId });
-        aiPredict.resultObj = data;
-        aiPredict.result = formatResult(data);
-      } catch (e) {
-        aiPredict.resultObj = null;
-        aiPredict.result = 'Error: ' + e.message;
-      } finally {
-        aiLoading.predict = false;
       }
     }
 
@@ -566,7 +597,7 @@ createApp({
         aiTrend.result = formatResult(data);
       } catch (e) {
         aiTrend.resultObj = null;
-        aiTrend.result = 'Error: ' + e.message;
+        aiTrend.result = '错误: ' + e.message;
       } finally {
         aiLoading.trend = false;
       }
@@ -642,7 +673,7 @@ createApp({
       scrollChatToBottom();
 
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = proto + '//' + location.host + '/api/v1/ai/chat/ws';
+      const wsUrl = proto + '//' + location.host + '/api/v1/ai/chat/ws' + (token.value ? '?token=' + encodeURIComponent(token.value) : '');
 
       let assistantContent = '';
       const toolCallNames = [];
@@ -702,7 +733,7 @@ createApp({
               }
               break;
             case 'error':
-              chatError.value = payload.message || 'Unknown error';
+              chatError.value = payload.message || '未知错误';
               chatStreaming.value = false;
               ws.close();
               break;
@@ -712,7 +743,7 @@ createApp({
 
       ws.onerror = () => {
         if (!wsOpened) {
-          chatError.value = 'WebSocket connection failed, falling back to SSE';
+          chatError.value = 'WebSocket 连接失败，尝试 SSE 回退';
           chatStreaming.value = false;
         }
       };
@@ -741,7 +772,7 @@ createApp({
 
     onMounted(() => {
       if (token.value) {
-        Promise.all([loadTasks(), loadWorkers(), loadInstances(), loadAIStatus(), loadFailedInstances()]);
+        Promise.all([loadTasks(), loadWorkers(), loadInstances(true), loadAIStatus(), loadFailedInstances()]);
       }
     });
 
@@ -764,7 +795,6 @@ createApp({
 
       aiLog,
       aiAutoAdvisor,
-      aiPredict,
       aiTrend,
       failedInstances,
       runningInstances,
@@ -781,9 +811,16 @@ createApp({
       loadTasks,
       loadWorkers,
       loadInstances,
+      refreshInstances,
+      instancePage,
+      instanceTotalPages,
+      instanceTotal,
+      goInstancePage,
       loadDAG,
       dagNodes,
       dagEdges,
+      dagLevels,
+      dagNodeMap,
       dagWidth,
       dagHeight,
       loadAIStatus,
@@ -798,9 +835,9 @@ createApp({
 
       runLogAnalysis,
       onSelectFailedInstance,
+      analyzeInstance,
       loadFailedInstances,
       runAutoAdvisor,
-      runPredictDuration,
       runTrendAnalysis,
       renderMarkdown,
       conversations,
