@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -15,9 +16,7 @@ import (
 	"github.com/example/go-ai-scheduler/internal/config"
 	"github.com/example/go-ai-scheduler/internal/model"
 	"github.com/example/go-ai-scheduler/internal/pkg/cronexpr"
-	"github.com/example/go-ai-scheduler/internal/pkg/logger"
 	"github.com/example/go-ai-scheduler/internal/pkg/metrics"
-	"github.com/example/go-ai-scheduler/internal/rpc"
 	schedulercache "github.com/example/go-ai-scheduler/internal/scheduler/cache"
 	"github.com/example/go-ai-scheduler/internal/scheduler/dispatch"
 	"github.com/example/go-ai-scheduler/internal/scheduler/engine"
@@ -34,7 +33,7 @@ import (
 
 func main() {
 	cfg := config.Default("scheduler")
-	l := logger.New(cfg.ServiceName)
+	l := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}).WithAttrs([]slog.Attr{slog.String("service", cfg.ServiceName)}))
 	resources, cleanup := app.BuildResources(cfg, l)
 	defer cleanup()
 
@@ -49,7 +48,7 @@ func main() {
 	workerService := apiservice.NewWorkerService(resources.Repositories.Worker)
 	workerHandler := handler.NewWorkerHandler(workerService)
 	router := route.NewRouter(resources.Repositories.Worker)
-	dispatcher := dispatch.NewClientWithRateLimiter(3000) // 3000 dispatch/sec
+	dispatcher := dispatch.NewClientWithRateLimiter(3000)
 	alerter := alert.New(cfg.AlertWebhookURL, l)
 	aiClient := apiservice.NewAIClient(os.Getenv("AI_SERVICE_URL"))
 	taskRuntimeService := apiservice.NewTaskRuntimeService(resources.Repositories.Task, resources.Repositories.TaskInstance, resources.Repositories.Worker, router, dispatcher, alerter, cfg.SchedulerURL, l, aiClient)
@@ -58,7 +57,8 @@ func main() {
 	leaderCtx := context.Background()
 	elector := leader.New(resources.DB, cfg.EtcdAddrs, l)
 	if err := elector.Acquire(leaderCtx); err != nil {
-		l.Fatalf("acquire leadership: %v", err)
+		l.Error("acquire leadership", "error", err)
+		os.Exit(1)
 	}
 
 	schedEngine := engine.New(resources.Repositories.Task, resources.Repositories.TaskInstance, l)
@@ -68,7 +68,7 @@ func main() {
 		}
 		task, err := resources.Repositories.Task.GetTask(leaderCtx, taskID)
 		if err != nil {
-			l.Printf("engine trigger: get task %d failed: %v", taskID, err)
+			l.Warn("engine trigger: get task failed", "task_id", taskID, "error", err)
 			return
 		}
 		if task.Status != "enabled" {
@@ -81,7 +81,7 @@ func main() {
 			Status:             "pending",
 		}
 		if err := resources.Repositories.TaskInstance.CreateInstance(leaderCtx, instance); err != nil {
-			l.Printf("engine trigger: create instance for task %d failed: %v", taskID, err)
+			l.Warn("engine trigger: create instance failed", "task_id", taskID, "error", err)
 			return
 		}
 		worker, err := router.Pick(leaderCtx, route.SelectOptions{
@@ -94,12 +94,12 @@ func main() {
 				_ = resources.Repositories.Task.UpdateTask(leaderCtx, task)
 				return
 			}
-			l.Printf("engine trigger: pick worker for task %d failed: %v", taskID, err)
+			l.Warn("engine trigger: pick worker failed", "task_id", taskID, "error", err)
 			return
 		}
 		dispatchTime := time.Now()
 		_ = resources.Repositories.TaskInstance.UpdateInstanceDispatch(leaderCtx, instance.ID, worker.ID, dispatchTime.Format(time.RFC3339Nano))
-		if err := dispatcher.Dispatch(leaderCtx, worker, rpc.ExecuteTaskRequest{
+		if err := dispatcher.Dispatch(leaderCtx, worker, model.ExecuteTaskRequest{
 			ScheduleInstanceID: instance.ScheduleInstanceID,
 			TaskID:             task.ID,
 			TaskType:           task.Type,
@@ -122,12 +122,11 @@ func main() {
 			_ = resources.Repositories.Task.UpdateTask(leaderCtx, task)
 			schedEngine.AddToWheel(task.ID, nextTrigger)
 		}
-		l.Printf("engine dispatched task_id=%d instance_id=%d worker_id=%s bp=%s",
-			task.ID, instance.ID, worker.ID, bp.State().String())
+		l.Debug("engine dispatched", "task_id", task.ID, "instance_id", instance.ID, "worker_id", worker.ID, "bp", bp.State().String())
 	}
 
 	if err := schedEngine.Warm(leaderCtx); err != nil {
-		l.Printf("engine initial warm: %v", err)
+		l.Warn("engine initial warm", "error", err)
 	}
 	go schedEngine.Start(leaderCtx)
 	go schedEngine.WarmPeriodically(leaderCtx, 10*time.Second)
@@ -138,7 +137,6 @@ func main() {
 	go retryLoop.Start(leaderCtx)
 	go cacheMgr.StartWarmLoop(leaderCtx, 10*time.Second)
 
-	// Daily AI health summary: compute snapshot and log structured report.
 	go func() {
 		for {
 			now := time.Now()
@@ -148,17 +146,17 @@ func main() {
 			tasks, _ := resources.Repositories.Task.ListTasks(context.Background())
 			instances, _ := resources.Repositories.TaskInstance.ListInstancesByTimeRange(context.Background(), time.Now().Add(-24*time.Hour), time.Now(), 0, 0)
 			snap := trendPkg.ComputeSnapshot(workers, tasks, instances, 24)
-			l.Printf("daily health summary: workers=%d/%d load=%.1f%% tasks=%d/%d instances=%d failed=%d success=%d",
-				snap.OnlineWorkers, snap.WorkerCount, snap.AvgWorkerLoad*100,
-				snap.EnabledTasks, snap.TaskCount,
-				snap.TotalInstances, snap.FailedInstances, snap.SuccessInstances)
+			l.Debug("daily health summary",
+				"online_workers", snap.OnlineWorkers, "worker_count", snap.WorkerCount,
+				"avg_load_pct", snap.AvgWorkerLoad*100,
+				"enabled_tasks", snap.EnabledTasks, "task_count", snap.TaskCount,
+				"total_instances", snap.TotalInstances, "failed", snap.FailedInstances, "success", snap.SuccessInstances)
 		}
 	}()
 
 	healthLoop := health.NewChecker(workerService, l, 30*time.Second, 10*time.Second)
 	go healthLoop.Start(leaderCtx)
 
-	// Record worker load snapshots for trend analysis.
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
@@ -176,10 +174,9 @@ func main() {
 						WorkerID: w.ID, CurrentLoad: w.CurrentLoad, MaxConcurrency: w.MaxConcurrency, Status: w.Status,
 					})
 				}
-				// Cleanup snapshots older than 7 days.
 				cutoff := time.Now().Add(-7 * 24 * time.Hour)
 				if n, err := resources.Repositories.WorkerLoad.DeleteSnapshotsBefore(leaderCtx, cutoff); err == nil && n > 0 {
-					l.Printf("worker load cleanup: deleted %d old snapshots", n)
+					l.Debug("worker load cleanup: deleted old snapshots", "count", n)
 				}
 			}
 		}
@@ -187,14 +184,16 @@ func main() {
 
 	grpcListener, err := net.Listen("tcp", cfg.GRPCAddr)
 	if err != nil {
-		l.Fatalf("listen grpc: %v", err)
+		l.Error("listen grpc", "error", err)
+		os.Exit(1)
 	}
 	grpcServer := grpc.NewServer()
 	schedulergrpc.Register(grpcServer, schedulergrpc.NewServer(workerService, taskRuntimeService))
 	go func() {
-		l.Printf("starting scheduler grpc server on %s", cfg.GRPCAddr)
+		l.Info("starting scheduler grpc server", "addr", cfg.GRPCAddr)
 		if serveErr := grpcServer.Serve(grpcListener); serveErr != nil {
-			l.Fatalf("scheduler grpc exited with error: %v", serveErr)
+			l.Error("scheduler grpc exited with error", "error", serveErr)
+			os.Exit(1)
 		}
 	}()
 
@@ -203,9 +202,10 @@ func main() {
 		Handler: handler.NewSchedulerRouter(workerHandler, taskRuntimeHandler, eventHandler, handler.NewWorkerLoadHandler(resources.Repositories.WorkerLoad)),
 	}
 
-	l.Printf("starting scheduler http server on %s", cfg.HTTPAddr)
+	l.Info("starting scheduler http server", "addr", cfg.HTTPAddr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		l.Fatalf("scheduler exited with error: %v", err)
+		l.Error("scheduler exited with error", "error", err)
+		os.Exit(1)
 	}
 }
 

@@ -2,11 +2,10 @@ package retry
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/example/go-ai-scheduler/internal/model"
-	"github.com/example/go-ai-scheduler/internal/rpc"
 	"github.com/example/go-ai-scheduler/internal/repo"
 	"github.com/example/go-ai-scheduler/internal/scheduler/dispatch"
 	"github.com/example/go-ai-scheduler/internal/scheduler/route"
@@ -18,7 +17,7 @@ type Loop struct {
 	instances    repo.TaskInstanceRepository
 	router       *route.Router
 	dispatcher   *dispatch.Client
-	logger       *log.Logger
+	logger       *slog.Logger
 	interval     time.Duration
 	schedulerURL string
 }
@@ -29,7 +28,7 @@ func NewLoop(
 	instances repo.TaskInstanceRepository,
 	router *route.Router,
 	dispatcher *dispatch.Client,
-	logger *log.Logger,
+	logger *slog.Logger,
 	interval time.Duration,
 	schedulerURL string,
 ) *Loop {
@@ -56,7 +55,7 @@ func (l *Loop) Start(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			l.logger.Printf("retry loop stopped")
+			l.logger.Debug("retry loop stopped")
 			return
 		case <-ticker.C:
 			l.scan(ctx)
@@ -67,14 +66,14 @@ func (l *Loop) Start(ctx context.Context) {
 func (l *Loop) scan(ctx context.Context) {
 	instances, err := l.instances.ListDueRetryInstances(ctx, time.Now(), 100)
 	if err != nil {
-		l.logger.Printf("list retry_waiting instances failed: %v", err)
+		l.logger.Warn("list retry_waiting instances failed", "error", err)
 		return
 	}
 
 	for _, instance := range instances {
 		task, err := l.tasks.GetTask(ctx, instance.TaskID)
 		if err != nil {
-			l.logger.Printf("load task for retry instance failed instance_id=%d err=%v", instance.ID, err)
+			l.logger.Warn("load task for retry instance failed", "instance_id", instance.ID, "error", err)
 			continue
 		}
 
@@ -86,18 +85,18 @@ func (l *Loop) scan(ctx context.Context) {
 			if err == route.ErrNoAvailableWorker {
 				return
 			}
-			l.logger.Printf("pick worker for retry instance failed instance_id=%d err=%v", instance.ID, err)
+			l.logger.Warn("pick worker for retry instance failed", "instance_id", instance.ID, "error", err)
 			continue
 		}
 
 		dispatchTime := time.Now()
 		if err := l.instances.UpdateInstanceDispatch(ctx, instance.ID, worker.ID, dispatchTime.Format(time.RFC3339Nano)); err != nil {
 			_ = l.router.Release(ctx, worker)
-			l.logger.Printf("update retry instance dispatch failed instance_id=%d err=%v", instance.ID, err)
+			l.logger.Warn("update retry instance dispatch failed", "instance_id", instance.ID, "error", err)
 			continue
 		}
 
-		err = l.dispatcher.Dispatch(ctx, worker, rpc.ExecuteTaskRequest{
+		err = l.dispatcher.Dispatch(ctx, worker, model.ExecuteTaskRequest{
 			ScheduleInstanceID: instance.ScheduleInstanceID,
 			TaskID:             task.ID,
 			TaskType:           task.Type,
@@ -112,11 +111,10 @@ func (l *Loop) scan(ctx context.Context) {
 		if err != nil {
 			_ = l.instances.UpdateInstanceStatus(ctx, instance.ID, "retry_waiting")
 			_ = l.router.Release(ctx, worker)
-			l.logger.Printf("dispatch retry instance failed instance_id=%d err=%v", instance.ID, err)
+			l.logger.Warn("dispatch retry instance failed", "instance_id", instance.ID, "error", err)
 			continue
 		}
 
-		l.logger.Printf("retry instance dispatched instance_id=%d worker_id=%s retry_count=%d",
-			instance.ID, worker.ID, instance.RetryCount)
+		l.logger.Debug("retry instance dispatched", "instance_id", instance.ID, "worker_id", worker.ID, "retry_count", instance.RetryCount)
 	}
 }

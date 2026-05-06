@@ -1,14 +1,14 @@
-package audit
+package service
 
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"time"
 )
 
-// Entry represents one audited operation.
-type Entry struct {
+// AuditEntry represents one audited operation.
+type AuditEntry struct {
 	Timestamp    time.Time `json:"timestamp"`
 	Action       string    `json:"action"`
 	ResourceType string    `json:"resource_type"`
@@ -21,24 +21,24 @@ type Entry struct {
 
 // Auditor writes audit entries as structured JSON to a logger.
 type Auditor struct {
-	logger *log.Logger
+	logger *slog.Logger
 }
 
-// New creates an Auditor.
-func New(logger *log.Logger) *Auditor {
+// NewAuditor creates an Auditor.
+func NewAuditor(logger *slog.Logger) *Auditor {
 	return &Auditor{logger: logger}
 }
 
 // Record emits one audit entry.
-func (a *Auditor) Record(_ context.Context, entry Entry) {
+func (a *Auditor) Record(_ context.Context, entry AuditEntry) {
 	entry.Timestamp = time.Now()
 	if entry.Result == "" {
 		entry.Result = "success"
 	}
 	data, err := json.Marshal(entry)
 	if err != nil {
-		a.logger.Printf("audit marshal error: %v", err)
+		a.logger.Error("audit marshal error", "error", err)
 		return
 	}
-	a.logger.Printf("AUDIT %s", string(data))
+	a.logger.Debug("AUDIT", "data", string(data))
 }

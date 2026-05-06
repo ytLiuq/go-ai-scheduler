@@ -2,7 +2,7 @@ package grpcserver
 
 import (
 	"context"
-	"log"
+	"log/slog"
 
 	"github.com/example/go-ai-scheduler/internal/api/service"
 	schedulerv1 "github.com/example/go-ai-scheduler/proto/gen/scheduler/v1"
@@ -26,7 +26,6 @@ func Register(s *grpc.Server, impl *Server) {
 	schedulerv1.RegisterWorkerControlServiceServer(s, impl)
 }
 
-// RegisterWorker handles one registration RPC.
 func (s *Server) RegisterWorker(ctx context.Context, req *schedulerv1.RegisterWorkerRequest) (*schedulerv1.RegisterWorkerResponse, error) {
 	svcReq := service.WorkerRegistrationRequest{
 		WorkerID:       req.GetWorkerId(),
@@ -44,7 +43,6 @@ func (s *Server) RegisterWorker(ctx context.Context, req *schedulerv1.RegisterWo
 	return &schedulerv1.RegisterWorkerResponse{Accepted: true}, nil
 }
 
-// Heartbeat handles one heartbeat RPC.
 func (s *Server) Heartbeat(ctx context.Context, req *schedulerv1.HeartbeatRequest) (*schedulerv1.HeartbeatResponse, error) {
 	svcReq := service.WorkerHeartbeatRequest{
 		WorkerID:        req.GetWorkerId(),
@@ -58,7 +56,6 @@ func (s *Server) Heartbeat(ctx context.Context, req *schedulerv1.HeartbeatReques
 	return &schedulerv1.HeartbeatResponse{Ok: true}, nil
 }
 
-// ReportTaskStatus handles one runtime status RPC.
 func (s *Server) ReportTaskStatus(ctx context.Context, req *schedulerv1.ReportTaskStatusRequest) (*schedulerv1.ReportTaskStatusResponse, error) {
 	svcReq := service.TaskStatusReportRequest{
 		ScheduleInstanceID: req.GetScheduleInstanceId(),
@@ -73,15 +70,14 @@ func (s *Server) ReportTaskStatus(ctx context.Context, req *schedulerv1.ReportTa
 	return &schedulerv1.ReportTaskStatusResponse{Ok: true}, nil
 }
 
-// AckTask acknowledges worker receipt of a task dispatch.
+var ackLogger = slog.Default().With("component", "scheduler-grpc")
+
 func (s *Server) AckTask(ctx context.Context, req *schedulerv1.AckTaskRequest) (*schedulerv1.AckTaskResponse, error) {
-	log.Printf("task acked by worker schedule_instance_id=%s worker_id=%s", req.GetScheduleInstanceId(), req.GetWorkerId())
+	ackLogger.Debug("task acked by worker", "schedule_instance_id", req.GetScheduleInstanceId(), "worker_id", req.GetWorkerId())
 	return &schedulerv1.AckTaskResponse{Ok: true}, nil
 }
 
-// ReportTaskLog receives log messages from workers during task execution.
 func (s *Server) ReportTaskLog(ctx context.Context, req *schedulerv1.ReportTaskLogRequest) (*schedulerv1.ReportTaskLogResponse, error) {
-	log.Printf("task log schedule_instance_id=%s worker_id=%s level=%s msg=%s",
-		req.GetScheduleInstanceId(), req.GetWorkerId(), req.GetLogLevel(), req.GetLogMessage())
+	ackLogger.Debug("task log", "schedule_instance_id", req.GetScheduleInstanceId(), "worker_id", req.GetWorkerId(), "level", req.GetLogLevel(), "msg", req.GetLogMessage())
 	return &schedulerv1.ReportTaskLogResponse{Ok: true}, nil
 }

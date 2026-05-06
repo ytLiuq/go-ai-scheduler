@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -13,7 +13,6 @@ import (
 	"github.com/example/go-ai-scheduler/internal/model"
 	"github.com/example/go-ai-scheduler/internal/pkg/metrics"
 	"github.com/example/go-ai-scheduler/internal/repo"
-	"github.com/example/go-ai-scheduler/internal/rpc"
 	"github.com/example/go-ai-scheduler/internal/scheduler/dispatch"
 	"github.com/example/go-ai-scheduler/internal/scheduler/route"
 )
@@ -39,7 +38,7 @@ type TaskRuntimeService struct {
 	router       *route.Router
 	dispatch     *dispatch.Client
 	alerter      *alert.Alerter
-	logger       *log.Logger
+	logger       *slog.Logger
 	schedulerURL string
 	aiClient     *AIClient
 }
@@ -53,7 +52,7 @@ func NewTaskRuntimeService(
 	dispatcher *dispatch.Client,
 	alerter *alert.Alerter,
 	schedulerURL string,
-	logger *log.Logger,
+	logger *slog.Logger,
 	aiClient *AIClient,
 ) *TaskRuntimeService {
 	return &TaskRuntimeService{
@@ -79,14 +78,12 @@ func (s *TaskRuntimeService) ReportStatus(ctx context.Context, req TaskStatusRep
 		return err
 	}
 	if isTerminalStatus(instance.Status) {
-		s.logger.Printf("duplicate task status ignored schedule_instance_id=%s current_status=%s incoming_status=%s",
-			req.ScheduleInstanceID, instance.Status, req.Status)
+		s.logger.Debug("duplicate task status ignored", "schedule_instance_id", req.ScheduleInstanceID, "current_status", instance.Status, "incoming_status", req.Status)
 		return nil
 	}
 	if err := s.instances.UpdateInstanceResult(ctx, req.ScheduleInstanceID, req.Status, req.ErrorCode, req.ErrorMessage); err != nil {
 		return err
 	}
-	// Persist execution timestamps if provided by the worker.
 	if req.StartedAt != "" || req.FinishedAt != "" {
 		var startedAt, finishedAt time.Time
 		if req.StartedAt != "" {
@@ -100,19 +97,17 @@ func (s *TaskRuntimeService) ReportStatus(ctx context.Context, req TaskStatusRep
 			}
 		}
 		if err := s.instances.UpdateInstanceTimestamps(ctx, req.ScheduleInstanceID, startedAt, finishedAt); err != nil {
-			s.logger.Printf("update timestamps failed schedule_instance_id=%s err=%v", req.ScheduleInstanceID, err)
+			s.logger.Warn("update timestamps failed", "schedule_instance_id", req.ScheduleInstanceID, "error", err)
 		}
 	}
 	metrics.DefaultRegistry.IncCounter("task_runtime_reports_total", map[string]string{"status": req.Status})
 	if req.Status == "running" {
-		s.logger.Printf("task running schedule_instance_id=%s worker_id=%s", req.ScheduleInstanceID, req.WorkerID)
+		s.logger.Debug("task running", "schedule_instance_id", req.ScheduleInstanceID, "worker_id", req.WorkerID)
 		return nil
 	}
-	// On failure, auto-analyze with AI service asynchronously.
 	if req.Status == "failed" && s.aiClient != nil {
 		go s.analyzeFailedInstance(instance, req)
 	}
-	// On success, advance downstream tasks so they become due.
 	if req.Status == "success" {
 		s.fireDownstream(ctx, instance)
 	}
@@ -132,11 +127,10 @@ func (s *TaskRuntimeService) ReportStatus(ctx context.Context, req TaskStatusRep
 	return s.retryIfNeeded(ctx, instance, req)
 }
 
-// fireDownstream triggers downstream tasks that depend on this task.
 func (s *TaskRuntimeService) fireDownstream(ctx context.Context, instance *model.TaskInstance) {
 	downstream, err := s.tasks.ListDownstreamTasks(ctx, instance.TaskID)
 	if err != nil {
-		s.logger.Printf("list downstream tasks failed task_id=%d err=%v", instance.TaskID, err)
+		s.logger.Warn("list downstream tasks failed", "task_id", instance.TaskID, "error", err)
 		return
 	}
 	for _, dtID := range downstream {
@@ -147,12 +141,11 @@ func (s *TaskRuntimeService) fireDownstream(ctx context.Context, instance *model
 		if dt.Status != "enabled" {
 			continue
 		}
-		// Advance next trigger time to now so the trigger loop picks it up.
 		dt.NextTriggerTime = time.Now()
 		if err := s.tasks.UpdateTask(ctx, dt); err != nil {
-			s.logger.Printf("update downstream task next_trigger failed task_id=%d err=%v", dtID, err)
+			s.logger.Warn("update downstream task next_trigger failed", "task_id", dtID, "error", err)
 		}
-		s.logger.Printf("downstream task advanced task_id=%d depends_on=%d", dtID, instance.TaskID)
+		s.logger.Debug("downstream task advanced", "task_id", dtID, "depends_on", instance.TaskID)
 	}
 }
 
@@ -166,8 +159,7 @@ func (s *TaskRuntimeService) retryIfNeeded(ctx context.Context, instance *model.
 		return err
 	}
 	if instance.RetryCount >= task.MaxRetry {
-		s.logger.Printf("retry skipped task_id=%d schedule_instance_id=%s retry_count=%d max_retry=%d",
-			task.ID, instance.ScheduleInstanceID, instance.RetryCount, task.MaxRetry)
+		s.logger.Debug("retry skipped: max retries exhausted", "task_id", task.ID, "schedule_instance_id", instance.ScheduleInstanceID, "retry_count", instance.RetryCount, "max_retry", task.MaxRetry)
 		if s.alerter != nil {
 			s.alerter.Send(ctx, alert.Payload{
 				TaskID:             task.ID,
@@ -183,13 +175,11 @@ func (s *TaskRuntimeService) retryIfNeeded(ctx context.Context, instance *model.
 		return nil
 	}
 	if !shouldRetryOnErrors(task.RetryPolicy, task.RetryOnErrors, req.ErrorCode) {
-		s.logger.Printf("retry skipped by error_code policy task_id=%d schedule_instance_id=%s error_code=%s",
-			task.ID, instance.ScheduleInstanceID, req.ErrorCode)
+		s.logger.Debug("retry skipped: error code not in retry list", "task_id", task.ID, "schedule_instance_id", instance.ScheduleInstanceID, "error_code", req.ErrorCode)
 		return nil
 	}
 	if retryWindowExceeded(instance, task.RetryWindowSeconds) {
-		s.logger.Printf("retry skipped by total window task_id=%d schedule_instance_id=%s window=%ds",
-			task.ID, instance.ScheduleInstanceID, task.RetryWindowSeconds)
+		s.logger.Debug("retry skipped: total window exceeded", "task_id", task.ID, "schedule_instance_id", instance.ScheduleInstanceID, "window_seconds", task.RetryWindowSeconds)
 		return nil
 	}
 
@@ -210,8 +200,7 @@ func (s *TaskRuntimeService) retryIfNeeded(ctx context.Context, instance *model.
 		if err := s.instances.CreateInstance(ctx, retryInstance); err != nil {
 			return err
 		}
-		s.logger.Printf("retry deferred task_id=%d retry_instance_id=%d retry_count=%d delay=%v",
-			task.ID, retryInstance.ID, retryCount, delay)
+		s.logger.Debug("retry deferred", "task_id", task.ID, "retry_instance_id", retryInstance.ID, "retry_count", retryCount, "delay", delay)
 		return nil
 	}
 
@@ -226,8 +215,7 @@ func (s *TaskRuntimeService) retryIfNeeded(ctx context.Context, instance *model.
 	if err != nil {
 		if err == route.ErrNoAvailableWorker {
 			_ = s.instances.UpdateInstanceStatus(ctx, retryInstance.ID, "retry_waiting")
-			s.logger.Printf("retry waiting for worker task_id=%d retry_instance_id=%d retry_count=%d",
-				task.ID, retryInstance.ID, retryCount)
+			s.logger.Debug("retry waiting for worker", "task_id", task.ID, "retry_instance_id", retryInstance.ID, "retry_count", retryCount)
 			return nil
 		}
 		return err
@@ -238,7 +226,7 @@ func (s *TaskRuntimeService) retryIfNeeded(ctx context.Context, instance *model.
 		_ = s.router.Release(ctx, worker)
 		return err
 	}
-	if err := s.dispatch.Dispatch(ctx, worker, rpc.ExecuteTaskRequest{
+	if err := s.dispatch.Dispatch(ctx, worker, model.ExecuteTaskRequest{
 		ScheduleInstanceID: retryInstance.ScheduleInstanceID,
 		TaskID:             task.ID,
 		TaskType:           task.Type,
@@ -252,13 +240,11 @@ func (s *TaskRuntimeService) retryIfNeeded(ctx context.Context, instance *model.
 	}); err != nil {
 		_ = s.instances.UpdateInstanceStatus(ctx, retryInstance.ID, "retry_waiting")
 		_ = s.router.Release(ctx, worker)
-		s.logger.Printf("retry dispatch deferred task_id=%d retry_instance_id=%d err=%v",
-			task.ID, retryInstance.ID, err)
+		s.logger.Warn("retry dispatch deferred", "task_id", task.ID, "retry_instance_id", retryInstance.ID, "error", err)
 		return nil
 	}
 
-	s.logger.Printf("retry dispatched task_id=%d retry_instance_id=%d retry_count=%d worker_id=%s",
-		task.ID, retryInstance.ID, retryCount, worker.ID)
+	s.logger.Debug("retry dispatched", "task_id", task.ID, "retry_instance_id", retryInstance.ID, "retry_count", retryCount, "worker_id", worker.ID)
 	return nil
 }
 
@@ -292,16 +278,15 @@ func retryDelay(retryPolicy string, retryCount int, intervalSeconds int) time.Du
 		if intervalSeconds > 0 {
 			return time.Duration(intervalSeconds) * time.Second
 		}
-		return 0 // immediate retry when not configured
+		return 0
 	default:
 		return 0
 	}
 }
 
-// retryWindowExceeded checks if the instance has been retrying beyond the allowed window.
 func retryWindowExceeded(instance *model.TaskInstance, windowSeconds int) bool {
 	if windowSeconds <= 0 {
-		return false // no window configured
+		return false
 	}
 	window := time.Duration(windowSeconds) * time.Second
 	return time.Since(instance.TriggerTime) > window
@@ -325,25 +310,24 @@ func (s *TaskRuntimeService) analyzeFailedInstance(instance *model.TaskInstance,
 
 	task, err := s.tasks.GetTask(ctx, instance.TaskID)
 	if err != nil {
-		s.logger.Printf("ai analysis: get task %d failed: %v", instance.TaskID, err)
+		s.logger.Warn("ai analysis: get task failed", "task_id", instance.TaskID, "error", err)
 		return
 	}
 
-	// Enrich error message with task configuration context.
 	enrichedMsg := fmt.Sprintf("[Task: %s | Timeout: %ds | MaxRetry: %d | RetryPolicy: %s]\n%s",
 		task.Name, task.TimeoutSeconds, task.MaxRetry, task.RetryPolicy, req.ErrorMessage)
 	result, err := s.aiClient.AnalyzeLog(ctx, enrichedMsg, req.ErrorCode, task.Type, instance.RetryCount, instance.ID)
 	if err != nil {
-		s.logger.Printf("ai analysis failed schedule_instance_id=%s err=%v", instance.ScheduleInstanceID, err)
+		s.logger.Warn("ai analysis failed", "schedule_instance_id", instance.ScheduleInstanceID, "error", err)
 		return
 	}
 
 	analysisJSON, _ := json.Marshal(result)
 	if err := s.instances.UpdateInstanceAnalysis(ctx, instance.ScheduleInstanceID, string(analysisJSON)); err != nil {
-		s.logger.Printf("ai analysis persist failed schedule_instance_id=%s err=%v", instance.ScheduleInstanceID, err)
+		s.logger.Warn("ai analysis persist failed", "schedule_instance_id", instance.ScheduleInstanceID, "error", err)
 		return
 	}
-	s.logger.Printf("ai analysis completed schedule_instance_id=%s severity=%s", instance.ScheduleInstanceID, result.Severity)
+	s.logger.Debug("ai analysis completed", "schedule_instance_id", instance.ScheduleInstanceID, "severity", result.Severity)
 }
 
 func retryScheduleInstanceID(taskID int64, retryCount int) string {

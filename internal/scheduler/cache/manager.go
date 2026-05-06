@@ -3,7 +3,7 @@ package cache
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strconv"
 	"time"
 
@@ -13,14 +13,14 @@ import (
 
 // Manager coordinates Redis caching of task due-times and worker state.
 type Manager struct {
-	redis     *xredis.Client
-	taskRepo  repo.TaskRepository
+	redis      *xredis.Client
+	taskRepo   repo.TaskRepository
 	workerRepo repo.WorkerRepository
-	logger    *log.Logger
+	logger     *slog.Logger
 }
 
 // NewManager creates a cache manager. redis may be nil (no-op mode).
-func NewManager(redis *xredis.Client, taskRepo repo.TaskRepository, workerRepo repo.WorkerRepository, l *log.Logger) *Manager {
+func NewManager(redis *xredis.Client, taskRepo repo.TaskRepository, workerRepo repo.WorkerRepository, l *slog.Logger) *Manager {
 	return &Manager{
 		redis:      redis,
 		taskRepo:   taskRepo,
@@ -49,7 +49,7 @@ func (m *Manager) StartWarmLoop(ctx context.Context, interval time.Duration) {
 	for {
 		select {
 		case <-ctx.Done():
-			m.logger.Printf("cache warm loop stopped")
+			m.logger.Debug("cache warm loop stopped")
 			return
 		case <-ticker.C:
 			m.warm(ctx)
@@ -62,11 +62,10 @@ func (m *Manager) warm(ctx context.Context) {
 	m.warmWorkerCache(ctx)
 }
 
-// warmDueTasks preloads task IDs whose next_trigger_time is within the next 60s.
 func (m *Manager) warmDueTasks(ctx context.Context) {
 	tasks, err := m.taskRepo.ListDueTasks(ctx, 500)
 	if err != nil {
-		m.logger.Printf("cache warm: list due tasks failed: %v", err)
+		m.logger.Warn("cache warm: list due tasks failed", "error", err)
 		return
 	}
 	ids := make([]int64, 0, len(tasks))
@@ -74,22 +73,20 @@ func (m *Manager) warmDueTasks(ctx context.Context) {
 	now := time.Now()
 	for _, t := range tasks {
 		ids = append(ids, t.ID)
-		// Score = unix timestamp of next trigger, for ZRangeByScore queries
 		scores[t.ID] = float64(t.NextTriggerTime.Unix())
 		if t.NextTriggerTime.After(now) && t.NextTriggerTime.Before(now.Add(60*time.Second)) {
 			scores[t.ID] = float64(t.NextTriggerTime.Unix())
 		}
 	}
 	if err := m.redis.WarmDueTasks(ctx, ids, scores); err != nil {
-		m.logger.Printf("cache warm: write due tasks failed: %v", err)
+		m.logger.Warn("cache warm: write due tasks failed", "error", err)
 	}
 }
 
-// warmWorkerCache refreshes the online-worker set and per-worker info hashes.
 func (m *Manager) warmWorkerCache(ctx context.Context) {
 	workers, err := m.workerRepo.ListAvailableWorkers(ctx)
 	if err != nil {
-		m.logger.Printf("cache warm: list workers failed: %v", err)
+		m.logger.Warn("cache warm: list workers failed", "error", err)
 		return
 	}
 	ids := make([]string, 0, len(workers))
@@ -110,7 +107,7 @@ func (m *Manager) warmWorkerCache(ctx context.Context) {
 		}
 	}
 	if err := m.redis.WarmWorkerCache(ctx, ids, data); err != nil {
-		m.logger.Printf("cache warm: write worker cache failed: %v", err)
+		m.logger.Warn("cache warm: write worker cache failed", "error", err)
 	}
 }
 

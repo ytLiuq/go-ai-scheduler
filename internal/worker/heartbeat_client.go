@@ -1,4 +1,4 @@
-package heartbeat
+package worker
 
 import (
 	"bytes"
@@ -16,7 +16,7 @@ import (
 )
 
 // Client sends worker registration and heartbeat payloads to scheduler.
-type Client struct {
+type HeartbeatClient struct {
 	baseURL       string
 	protocol      string
 	httpClient    *http.Client
@@ -25,8 +25,8 @@ type Client struct {
 }
 
 // NewClient creates a scheduler heartbeat client.
-func NewClient(baseURL string, grpcAddr string, protocol string) *Client {
-	c := &Client{
+func NewHeartbeatClient(baseURL string, grpcAddr string, protocol string) *HeartbeatClient {
+	c := &HeartbeatClient{
 		baseURL:    baseURL,
 		protocol:   strings.ToLower(strings.TrimSpace(protocol)),
 		httpClient: &http.Client{Timeout: 3 * time.Second},
@@ -44,7 +44,7 @@ func NewClient(baseURL string, grpcAddr string, protocol string) *Client {
 }
 
 // Close releases the underlying gRPC connection.
-func (c *Client) Close() error {
+func (c *HeartbeatClient) Close() error {
 	if c.grpcConn != nil {
 		return c.grpcConn.Close()
 	}
@@ -52,7 +52,7 @@ func (c *Client) Close() error {
 }
 
 // Register registers a worker with the scheduler.
-func (c *Client) Register(ctx context.Context, req service.WorkerRegistrationRequest) error {
+func (c *HeartbeatClient) Register(ctx context.Context, req service.WorkerRegistrationRequest) error {
 	if c.protocol == "grpc" {
 		return c.registerGRPC(ctx, req)
 	}
@@ -60,14 +60,14 @@ func (c *Client) Register(ctx context.Context, req service.WorkerRegistrationReq
 }
 
 // Heartbeat reports worker liveness to the scheduler.
-func (c *Client) Heartbeat(ctx context.Context, req service.WorkerHeartbeatRequest) error {
+func (c *HeartbeatClient) Heartbeat(ctx context.Context, req service.WorkerHeartbeatRequest) error {
 	if c.protocol == "grpc" {
 		return c.heartbeatGRPC(ctx, req)
 	}
 	return c.post(ctx, "/api/v1/workers/heartbeat", req)
 }
 
-func (c *Client) registerGRPC(ctx context.Context, req service.WorkerRegistrationRequest) error {
+func (c *HeartbeatClient) registerGRPC(ctx context.Context, req service.WorkerRegistrationRequest) error {
 	if c.controlClient == nil {
 		return fmt.Errorf("grpc control client is not initialized")
 	}
@@ -90,7 +90,7 @@ func (c *Client) registerGRPC(ctx context.Context, req service.WorkerRegistratio
 	return nil
 }
 
-func (c *Client) heartbeatGRPC(ctx context.Context, req service.WorkerHeartbeatRequest) error {
+func (c *HeartbeatClient) heartbeatGRPC(ctx context.Context, req service.WorkerHeartbeatRequest) error {
 	if c.controlClient == nil {
 		return fmt.Errorf("grpc control client is not initialized")
 	}
@@ -109,7 +109,7 @@ func (c *Client) heartbeatGRPC(ctx context.Context, req service.WorkerHeartbeatR
 	return nil
 }
 
-func (c *Client) post(ctx context.Context, path string, payload any) error {
+func (c *HeartbeatClient) post(ctx context.Context, path string, payload any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)

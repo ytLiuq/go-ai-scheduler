@@ -5,8 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"log/slog"
+	"os"
+
 	apiservice "github.com/example/go-ai-scheduler/internal/api/service"
-	"github.com/example/go-ai-scheduler/internal/pkg/logger"
 	"github.com/example/go-ai-scheduler/internal/repo/teststore"
 )
 
@@ -73,7 +75,7 @@ func TestCheckerEvictsStaleWorker(t *testing.T) {
 func TestCheckerStartStop(t *testing.T) {
 	repo := teststore.NewWorkerRepository()
 	svc := apiservice.NewWorkerService(repo)
-	logr := logger.New("health-loop-test")
+	logr := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	checker := NewChecker(svc, logr, 50*time.Millisecond, 50*time.Millisecond)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)

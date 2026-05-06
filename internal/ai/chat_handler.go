@@ -3,7 +3,7 @@ package ai
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -69,7 +69,7 @@ func handleChat(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter,
 	if convID == "" && store != nil {
 		conv, err := store.CreateConversation(r.Context(), firstLine(req.Message, 50))
 		if err != nil {
-			log.Printf("create conversation failed: %v", err)
+			slog.Warn("create conversation failed", "error", err)
 		} else {
 			convID = conv.ID
 		}
@@ -83,7 +83,7 @@ func handleChat(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapter,
 	// Run agent.
 	result, runErr := agent.Run(r.Context(), llm, registry, agent.SystemPrompt, history, req.Message, sw)
 	if runErr != nil {
-		log.Printf("agent run error: %v", runErr)
+		slog.Warn("agent run error", "error", runErr)
 		sw.Error(runErr)
 		return
 	}
@@ -145,7 +145,7 @@ func handleChatWS(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapte
 	if convID == "" && store != nil {
 		conv, err := store.CreateConversation(r.Context(), firstLine(req.Message, 50))
 		if err != nil {
-			log.Printf("create conversation failed: %v", err)
+			slog.Warn("create conversation failed", "error", err)
 		} else {
 			convID = conv.ID
 		}
@@ -156,7 +156,7 @@ func handleChatWS(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAdapte
 
 	result, runErr := agent.Run(r.Context(), llm, registry, agent.SystemPrompt, history, req.Message, ws)
 	if runErr != nil {
-		log.Printf("agent run error: %v", runErr)
+		slog.Warn("agent run error", "error", runErr)
 		return
 	}
 

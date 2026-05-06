@@ -4,14 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/example/go-ai-scheduler/internal/model"
 	"github.com/example/go-ai-scheduler/internal/repo"
-	"github.com/example/go-ai-scheduler/internal/rpc"
 	"github.com/example/go-ai-scheduler/internal/scheduler/dispatch"
 	"github.com/example/go-ai-scheduler/internal/scheduler/route"
 )
@@ -22,7 +21,7 @@ type EventHandler struct {
 	instances  repo.TaskInstanceRepository
 	router     *route.Router
 	dispatcher *dispatch.Client
-	logger     *log.Logger
+	logger     *slog.Logger
 }
 
 // NewEventHandler creates an EventHandler.
@@ -31,7 +30,7 @@ func NewEventHandler(
 	instances repo.TaskInstanceRepository,
 	router *route.Router,
 	dispatcher *dispatch.Client,
-	l *log.Logger,
+	l *slog.Logger,
 ) *EventHandler {
 	return &EventHandler{
 		tasks:      tasks,
@@ -68,10 +67,9 @@ func (h *EventHandler) Publish(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	triggered := 0
 
-	// Find all enabled event-triggered tasks matching this event name.
 	allTasks, err := h.tasks.ListTasks(ctx)
 	if err != nil {
-		h.logger.Printf("event handler: list tasks failed: %v", err)
+		h.logger.Error("event handler: list tasks failed", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -84,7 +82,7 @@ func (h *EventHandler) Publish(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		h.logger.Printf("event %s matched task_id=%d", req.EventName, task.ID)
+		h.logger.Debug("event matched task", "event", req.EventName, "task_id", task.ID)
 
 		shardTotal := task.TotalShards
 		if shardTotal <= 0 {
@@ -100,7 +98,7 @@ func (h *EventHandler) Publish(w http.ResponseWriter, r *http.Request) {
 				Status:             "pending",
 			}
 			if err := h.instances.CreateInstance(ctx, instance); err != nil {
-				h.logger.Printf("event handler: create instance failed task_id=%d err=%v", task.ID, err)
+				h.logger.Warn("event handler: create instance failed", "task_id", task.ID, "error", err)
 				continue
 			}
 			worker, err := h.router.Pick(ctx, route.SelectOptions{
@@ -108,11 +106,11 @@ func (h *EventHandler) Publish(w http.ResponseWriter, r *http.Request) {
 				Strategy: task.RouteStrategy,
 			})
 			if err != nil {
-				h.logger.Printf("event handler: pick worker failed task_id=%d err=%v", task.ID, err)
+				h.logger.Warn("event handler: pick worker failed", "task_id", task.ID, "error", err)
 				continue
 			}
 			_ = h.instances.UpdateInstanceDispatch(ctx, instance.ID, worker.ID, time.Now().Format(time.RFC3339Nano))
-			if err := h.dispatcher.Dispatch(ctx, worker, rpc.ExecuteTaskRequest{
+			if err := h.dispatcher.Dispatch(ctx, worker, model.ExecuteTaskRequest{
 				ScheduleInstanceID: instance.ScheduleInstanceID,
 				TaskID:             task.ID,
 				TaskType:           task.Type,
@@ -122,7 +120,7 @@ func (h *EventHandler) Publish(w http.ResponseWriter, r *http.Request) {
 				ShardTotal:         task.TotalShards,
 				IdempotencyKey:     task.IdempotencyKey,
 			}); err != nil {
-				h.logger.Printf("event handler: dispatch failed task_id=%d err=%v", task.ID, err)
+				h.logger.Warn("event handler: dispatch failed", "task_id", task.ID, "error", err)
 				continue
 			}
 			triggered++
@@ -140,8 +138,6 @@ func generateScheduleInstanceID(taskID int64) string {
 	return fmt.Sprintf("task-%d-%d", taskID, time.Now().UnixNano())
 }
 
-// renderEventPayload replaces template variables in the task payload with event data.
-// Supports: {{.event.name}}, {{.event.payload.key}}, {{.event.payload.nested.key}}
 func renderEventPayload(template string, req publishEventRequest) string {
 	result := template
 	result = strings.ReplaceAll(result, "{{.event.name}}", req.EventName)

@@ -1,4 +1,4 @@
-package reporter
+package worker
 
 import (
 	"bytes"
@@ -16,7 +16,7 @@ import (
 )
 
 // Client reports task execution results back to scheduler.
-type Client struct {
+type ReportClient struct {
 	protocol      string
 	httpClient    *http.Client
 	grpcConn      *grpc.ClientConn
@@ -24,8 +24,8 @@ type Client struct {
 }
 
 // NewClient creates a scheduler report client.
-func NewClient(protocol string, grpcAddr string) *Client {
-	c := &Client{
+func NewReportClient(protocol string, grpcAddr string) *ReportClient {
+	c := &ReportClient{
 		protocol:   strings.ToLower(strings.TrimSpace(protocol)),
 		httpClient: &http.Client{Timeout: 3 * time.Second},
 	}
@@ -41,7 +41,7 @@ func NewClient(protocol string, grpcAddr string) *Client {
 }
 
 // Ack sends a task receipt acknowledgement to the scheduler.
-func (c *Client) Ack(ctx context.Context, schedulerURL, scheduleInstanceID, workerID string) error {
+func (c *ReportClient) Ack(ctx context.Context, schedulerURL, scheduleInstanceID, workerID string) error {
 	if c.protocol == "grpc" && c.controlClient != nil {
 		resp, err := c.controlClient.AckTask(ctx, &schedulerv1.AckTaskRequest{
 			ScheduleInstanceId: scheduleInstanceID,
@@ -72,7 +72,7 @@ func (c *Client) Ack(ctx context.Context, schedulerURL, scheduleInstanceID, work
 }
 
 // ReportLog sends a log entry from the worker to the scheduler.
-func (c *Client) ReportLog(ctx context.Context, schedulerURL, scheduleInstanceID, workerID, level, message string) error {
+func (c *ReportClient) ReportLog(ctx context.Context, schedulerURL, scheduleInstanceID, workerID, level, message string) error {
 	if c.protocol == "grpc" && c.controlClient != nil {
 		_, err := c.controlClient.ReportTaskLog(ctx, &schedulerv1.ReportTaskLogRequest{
 			ScheduleInstanceId:  scheduleInstanceID,
@@ -87,7 +87,7 @@ func (c *Client) ReportLog(ctx context.Context, schedulerURL, scheduleInstanceID
 }
 
 // Close releases the underlying gRPC connection.
-func (c *Client) Close() error {
+func (c *ReportClient) Close() error {
 	if c.grpcConn != nil {
 		return c.grpcConn.Close()
 	}
@@ -95,14 +95,14 @@ func (c *Client) Close() error {
 }
 
 // Report sends one execution status update.
-func (c *Client) Report(ctx context.Context, schedulerURL string, req apiservice.TaskStatusReportRequest) error {
+func (c *ReportClient) Report(ctx context.Context, schedulerURL string, req apiservice.TaskStatusReportRequest) error {
 	if c.protocol == "grpc" {
 		return c.reportGRPC(ctx, req)
 	}
 	return c.reportHTTP(ctx, schedulerURL, req)
 }
 
-func (c *Client) reportGRPC(ctx context.Context, req apiservice.TaskStatusReportRequest) error {
+func (c *ReportClient) reportGRPC(ctx context.Context, req apiservice.TaskStatusReportRequest) error {
 	if c.controlClient == nil {
 		return fmt.Errorf("grpc control client is not initialized")
 	}
@@ -124,7 +124,7 @@ func (c *Client) reportGRPC(ctx context.Context, req apiservice.TaskStatusReport
 	return nil
 }
 
-func (c *Client) reportHTTP(ctx context.Context, schedulerURL string, req apiservice.TaskStatusReportRequest) error {
+func (c *ReportClient) reportHTTP(ctx context.Context, schedulerURL string, req apiservice.TaskStatusReportRequest) error {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("marshal status report: %w", err)

@@ -3,7 +3,7 @@ package engine
 import (
 	"container/heap"
 	"context"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -19,14 +19,14 @@ type Engine struct {
 
 	taskRepo     repo.TaskRepository
 	instanceRepo repo.TaskInstanceRepository
-	logger       *log.Logger
+	logger       *slog.Logger
 
 	// Callback invoked for each task that is due.
 	OnTrigger func(taskID int64)
 }
 
 // New creates a new hybrid scheduling engine.
-func New(taskRepo repo.TaskRepository, instanceRepo repo.TaskInstanceRepository, l *log.Logger) *Engine {
+func New(taskRepo repo.TaskRepository, instanceRepo repo.TaskInstanceRepository, l *slog.Logger) *Engine {
 	return &Engine{
 		wheel:        NewTimingWheel(100*time.Millisecond, 600),
 		heap:         &taskHeap{},
@@ -58,7 +58,6 @@ func (e *Engine) Start(ctx context.Context) {
 	wheelTicker := time.NewTicker(e.wheel.TickDuration())
 	defer wheelTicker.Stop()
 
-	// Scan heap more frequently for precise short-term triggers.
 	heapTicker := time.NewTicker(50 * time.Millisecond)
 	defer heapTicker.Stop()
 
@@ -66,7 +65,7 @@ func (e *Engine) Start(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			if e.logger != nil {
-				e.logger.Printf("scheduling engine stopped")
+				e.logger.Debug("scheduling engine stopped")
 			}
 			return
 		case <-wheelTicker.C:
@@ -98,13 +97,11 @@ func (e *Engine) processHeapTick() {
 	}
 }
 
-// Warm loads upcoming tasks (due within the wheel's span) into the wheel,
-// and retry tasks into the min-heap.
+// Warm loads upcoming tasks into the wheel and retry tasks into the min-heap.
 func (e *Engine) Warm(ctx context.Context) error {
 	span := e.wheel.SlotSpan()
 	cutoff := time.Now().Add(span)
 
-	// Load periodic tasks due within the wheel span.
 	tasks, err := e.taskRepo.ListDueTasks(ctx, 500)
 	if err != nil {
 		return err
@@ -115,11 +112,12 @@ func (e *Engine) Warm(ctx context.Context) error {
 		}
 	}
 
-	// Load retry_waiting instances into the min-heap for precise timing.
 	retryInstances, err := e.instanceRepo.ListDueRetryInstances(ctx, cutoff, 500)
 	if err != nil {
-		if e.logger != nil { e.logger.Printf("engine warm: list retry instances failed: %v", err) }
-		return nil // non-fatal
+		if e.logger != nil {
+			e.logger.Warn("engine warm: list retry instances failed", "error", err)
+		}
+		return nil
 	}
 	for _, inst := range retryInstances {
 		if !inst.NextRetryTime.IsZero() && inst.NextRetryTime.Before(cutoff) {
@@ -144,7 +142,9 @@ func (e *Engine) WarmPeriodically(ctx context.Context, interval time.Duration) {
 			return
 		case <-ticker.C:
 			if err := e.Warm(ctx); err != nil {
-				if e.logger != nil { e.logger.Printf("engine warm failed: %v", err) }
+				if e.logger != nil {
+					e.logger.Warn("engine warm failed", "error", err)
+				}
 			}
 		}
 	}

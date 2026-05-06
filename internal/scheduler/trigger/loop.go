@@ -3,14 +3,13 @@ package trigger
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/example/go-ai-scheduler/internal/model"
 	"github.com/example/go-ai-scheduler/internal/pkg/cronexpr"
 	"github.com/example/go-ai-scheduler/internal/pkg/metrics"
 	"github.com/example/go-ai-scheduler/internal/repo"
-	"github.com/example/go-ai-scheduler/internal/rpc"
 	schedulercache "github.com/example/go-ai-scheduler/internal/scheduler/cache"
 	"github.com/example/go-ai-scheduler/internal/scheduler/dispatch"
 	"github.com/example/go-ai-scheduler/internal/scheduler/ratelimit"
@@ -23,16 +22,12 @@ type Loop struct {
 	instanceRepo repo.TaskInstanceRepository
 	router       *route.Router
 	dispatcher   *dispatch.Client
-	logger       *loggerAdapter
+	logger       *slog.Logger
 	interval     time.Duration
 	schedulerURL string
 	maxPending   int
 	cache        *schedulercache.Manager
 	bp           *ratelimit.BackpressureController
-}
-
-type loggerAdapter struct {
-	printf func(string, ...any)
 }
 
 // NewLoop creates a trigger loop with a fixed scan interval.
@@ -41,7 +36,7 @@ func NewLoop(
 	instanceRepo repo.TaskInstanceRepository,
 	router *route.Router,
 	dispatcher *dispatch.Client,
-	l *log.Logger,
+	l *slog.Logger,
 	interval time.Duration,
 	schedulerURL string,
 	maxPending int,
@@ -59,7 +54,7 @@ func NewLoop(
 		instanceRepo: instanceRepo,
 		router:       router,
 		dispatcher:   dispatcher,
-		logger:       &loggerAdapter{printf: l.Printf},
+		logger:       l,
 		interval:     interval,
 		schedulerURL: schedulerURL,
 		maxPending:   maxPending,
@@ -78,7 +73,7 @@ func (l *Loop) Start(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			l.logger.printf("trigger loop stopped")
+			l.logger.Debug("trigger loop stopped")
 			return
 		case <-ticker.C:
 			l.scan(ctx)
@@ -89,15 +84,14 @@ func (l *Loop) Start(ctx context.Context) {
 func (l *Loop) scan(ctx context.Context) {
 	pending, err := l.instanceRepo.CountInstancesByStatus(ctx, "pending")
 	if err != nil {
-		l.logger.printf("count pending instances failed: %v", err)
+		l.logger.Warn("count pending instances failed", "error", err)
 		return
 	}
 
-	// Update backpressure controller with current pending count.
 	if l.bp != nil {
 		l.bp.UpdatePending(ctx, pending)
 		if !l.bp.AllowDispatch() {
-			l.logger.printf("backpressure: state=%s pending=%d, rejecting scan", l.bp.State().String(), pending)
+			l.logger.Warn("backpressure: rejecting scan", "state", l.bp.State().String(), "pending", pending)
 			return
 		}
 		if delay := l.bp.ThrottleDelay(); delay > 0 {
@@ -130,30 +124,28 @@ func (l *Loop) scan(ctx context.Context) {
 		var err error
 		tasks, err = l.taskRepo.ListDueTasks(ctx, 100)
 		if err != nil {
-			l.logger.printf("list due tasks failed: %v", err)
+			l.logger.Warn("list due tasks failed", "error", err)
 			return
 		}
 	}
 
 	for _, task := range tasks {
 		if l.bp != nil && !l.bp.AllowDispatch() {
-			l.logger.printf("backpressure triggered mid-scan, remaining tasks deferred")
+			l.logger.Warn("backpressure triggered mid-scan, remaining tasks deferred")
 			return
 		}
 		if err := l.handleTask(ctx, task); err != nil {
-			l.logger.printf("handle due task failed task_id=%d err=%v", task.ID, err)
+			l.logger.Warn("handle due task failed", "task_id", task.ID, "error", err)
 		}
 	}
 }
 
 func (l *Loop) handleTask(ctx context.Context, task *model.Task) error {
-	// Check dependencies before triggering.
 	upstream, err := l.taskRepo.ListUpstreamDeps(ctx, task.ID)
 	if err != nil {
 		return fmt.Errorf("list upstream dependencies: %w", err)
 	}
 	if len(upstream) > 0 {
-		// Check if all upstream tasks have recent successful instances.
 		allSatisfied := true
 		for _, depID := range upstream {
 			instances, err := l.instanceRepo.ListInstancesByStatus(ctx, "success", 1)
@@ -174,10 +166,9 @@ func (l *Loop) handleTask(ctx context.Context, task *model.Task) error {
 			}
 		}
 		if !allSatisfied {
-			// Defer this task; dependencies not yet met.
 			task.NextTriggerTime = time.Now().Add(5 * time.Second)
 			_ = l.taskRepo.UpdateTask(ctx, task)
-			l.logger.printf("task_id=%d deferred: upstream dependencies not satisfied", task.ID)
+			l.logger.Debug("task deferred: upstream dependencies not satisfied", "task_id", task.ID)
 			return nil
 		}
 	}
@@ -208,7 +199,7 @@ func (l *Loop) handleTask(ctx context.Context, task *model.Task) error {
 			if err == route.ErrNoAvailableWorker {
 				task.NextTriggerTime = time.Now().Add(10 * time.Second)
 				_ = l.taskRepo.UpdateTask(ctx, task)
-				l.logger.printf("no worker for task_id=%d shard=%d", task.ID, shard)
+				l.logger.Debug("no worker available", "task_id", task.ID, "shard", shard)
 				return nil
 			}
 			return fmt.Errorf("pick worker shard=%d: %w", shard, err)
@@ -216,7 +207,7 @@ func (l *Loop) handleTask(ctx context.Context, task *model.Task) error {
 
 		dispatchTime := time.Now()
 		_ = l.instanceRepo.UpdateInstanceDispatch(ctx, instance.ID, worker.ID, dispatchTime.Format(time.RFC3339Nano))
-		if err := l.dispatcher.Dispatch(ctx, worker, rpc.ExecuteTaskRequest{
+		if err := l.dispatcher.Dispatch(ctx, worker, model.ExecuteTaskRequest{
 			ScheduleInstanceID: instance.ScheduleInstanceID,
 			TaskID:             task.ID,
 			TaskType:           task.Type,
@@ -236,10 +227,7 @@ func (l *Loop) handleTask(ctx context.Context, task *model.Task) error {
 		}
 		metrics.DefaultRegistry.IncCounter("scheduler_dispatch_total", map[string]string{"result": "success"})
 
-		l.logger.printf(
-			"task dispatched task_id=%d instance_id=%d worker_id=%s shard=%d/%d",
-			task.ID, instance.ID, worker.ID, shard, shardTotal,
-		)
+		l.logger.Debug("task dispatched", "task_id", task.ID, "instance_id", instance.ID, "worker_id", worker.ID, "shard", fmt.Sprintf("%d/%d", shard, shardTotal))
 	}
 
 	nextTrigger, err := nextTriggerTime(task, time.Now())

@@ -11,72 +11,88 @@ import (
 	"github.com/example/go-ai-scheduler/internal/api/middleware"
 	"github.com/example/go-ai-scheduler/internal/pkg/metrics"
 	"github.com/example/go-ai-scheduler/internal/tenant"
+	"github.com/gin-gonic/gin"
 )
 
 // NewSchedulerRouter wires internal scheduler-facing routes (no auth required).
 func NewSchedulerRouter(workerHandler *WorkerHandler, taskRuntimeHandler *TaskRuntimeHandler, eventHandler *EventHandler, workerLoadHandler *WorkerLoadHandler) http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", Health)
-	mux.Handle("/metrics", metrics.DefaultRegistry.Handler())
-	mux.HandleFunc("/api/v1/workers/register", workerHandler.Register)
-	mux.HandleFunc("/api/v1/workers/heartbeat", workerHandler.Heartbeat)
-	mux.HandleFunc("/api/v1/task-instances/report", taskRuntimeHandler.Report)
-	mux.HandleFunc("POST /api/v1/events/publish", eventHandler.Publish)
-	mux.HandleFunc("POST /api/v1/events/receive", eventHandler.Publish)
-	mux.HandleFunc("POST /api/v1/task-instances/cancel", taskRuntimeHandler.Cancel)
-	mux.HandleFunc("POST /api/v1/task-instances/ack", taskRuntimeHandler.Ack)
-	mux.HandleFunc("GET /api/v1/worker-loads", workerLoadHandler.List)
-	return metrics.Instrument("scheduler", mux)
+	gin.SetMode(gin.ReleaseMode)
+	engine := gin.New()
+	engine.Use(gin.Recovery())
+	engine.GET("/healthz", wrapHTTPHandler(Health))
+	engine.GET("/metrics", gin.WrapH(metrics.DefaultRegistry.Handler()))
+	engine.POST("/api/v1/workers/register", wrapHTTPHandler(workerHandler.Register))
+	engine.POST("/api/v1/workers/heartbeat", wrapHTTPHandler(workerHandler.Heartbeat))
+	engine.POST("/api/v1/task-instances/report", wrapHTTPHandler(taskRuntimeHandler.Report))
+	engine.POST("/api/v1/events/publish", wrapHTTPHandler(eventHandler.Publish))
+	engine.POST("/api/v1/events/receive", wrapHTTPHandler(eventHandler.Publish))
+	engine.POST("/api/v1/task-instances/cancel", wrapHTTPHandler(taskRuntimeHandler.Cancel))
+	engine.POST("/api/v1/task-instances/ack", wrapHTTPHandler(taskRuntimeHandler.Ack))
+	engine.GET("/api/v1/worker-loads", wrapHTTPHandler(workerLoadHandler.List))
+	return metrics.Instrument("scheduler", engine)
 }
 
 // NewAPIRouter wires external management and query routes with JWT auth and RBAC.
 func NewAPIRouter(authHandler *AuthHandler, workerHandler *WorkerHandler, taskHandler *TaskHandler, taskInstanceHandler *TaskInstanceHandler) http.Handler {
-	mux := http.NewServeMux()
+	gin.SetMode(gin.ReleaseMode)
+	engine := gin.New()
+	engine.Use(gin.Recovery())
 
 	// Public endpoints.
-	mux.HandleFunc("POST /api/auth/login", authHandler.Login)
-	mux.HandleFunc("/healthz", Health)
-	mux.Handle("/metrics", metrics.DefaultRegistry.Handler())
+	engine.POST("/api/auth/login", wrapHTTPHandler(authHandler.Login))
+	engine.GET("/healthz", wrapHTTPHandler(Health))
+	engine.GET("/metrics", gin.WrapH(metrics.DefaultRegistry.Handler()))
 
 	// All /api/v1/* routes require JWT authentication.
-	mux.HandleFunc("GET /api/v1/workers", requireAuth("viewer", workerHandler.List))
-	mux.HandleFunc("GET /api/v1/workers/", requireAuth("viewer", workerHandler.Get))
-	mux.HandleFunc("GET /api/v1/tasks", requireAuth("viewer", taskHandler.List))
-	mux.HandleFunc("GET /api/v1/tasks/dag", requireAuth("viewer", taskHandler.DAG))
-	mux.HandleFunc("GET /api/v1/tasks/", requireAuth("viewer", taskHandler.GetOrUpdate))
-	mux.HandleFunc("POST /api/v1/tasks", requireAuth("operator", taskHandler.List))       // POST = create
-	mux.HandleFunc("PUT /api/v1/tasks/", requireAuth("operator", taskHandler.GetOrUpdate)) // PUT = update
-	mux.HandleFunc("DELETE /api/v1/tasks/", requireAuth("admin", taskHandler.GetOrUpdate)) // DELETE
-	mux.HandleFunc("POST /api/v1/tasks/{id}/pause", requireAuth("operator", taskHandler.Pause))
-	mux.HandleFunc("POST /api/v1/tasks/{id}/resume", requireAuth("operator", taskHandler.Resume))
-	mux.HandleFunc("POST /api/v1/tasks/{id}/trigger", requireAuth("operator", taskHandler.Trigger))
-	mux.HandleFunc("GET /api/v1/task-instances", requireAuth("viewer", taskInstanceHandler.List))
-	mux.HandleFunc("GET /api/v1/task-instances/", requireAuth("viewer", taskInstanceHandler.Get))
+	engine.GET("/api/v1/workers", wrapHTTPHandler(requireAuth("viewer", workerHandler.List)))
+	engine.GET("/api/v1/workers/:id", wrapHTTPHandlerWithParams(requireAuth("viewer", workerHandler.Get), "id"))
+	engine.GET("/api/v1/tasks", wrapHTTPHandler(requireAuth("viewer", taskHandler.List)))
+	engine.GET("/api/v1/tasks/dag", wrapHTTPHandler(requireAuth("viewer", taskHandler.DAG)))
+	engine.GET("/api/v1/tasks/:id", wrapHTTPHandlerWithParams(requireAuth("viewer", taskHandler.GetOrUpdate), "id"))
+	engine.POST("/api/v1/tasks", wrapHTTPHandler(requireAuth("operator", taskHandler.List)))
+	engine.PUT("/api/v1/tasks/:id", wrapHTTPHandlerWithParams(requireAuth("operator", taskHandler.GetOrUpdate), "id"))
+	engine.DELETE("/api/v1/tasks/:id", wrapHTTPHandlerWithParams(requireAuth("admin", taskHandler.GetOrUpdate), "id"))
+	engine.POST("/api/v1/tasks/:id/pause", wrapHTTPHandlerWithParams(requireAuth("operator", taskHandler.Pause), "id"))
+	engine.POST("/api/v1/tasks/:id/resume", wrapHTTPHandlerWithParams(requireAuth("operator", taskHandler.Resume), "id"))
+	engine.POST("/api/v1/tasks/:id/trigger", wrapHTTPHandlerWithParams(requireAuth("operator", taskHandler.Trigger), "id"))
+	engine.GET("/api/v1/task-instances", wrapHTTPHandler(requireAuth("viewer", taskInstanceHandler.List)))
+	engine.GET("/api/v1/task-instances/:id", wrapHTTPHandlerWithParams(requireAuth("viewer", taskInstanceHandler.Get), "id"))
 
 	// AI endpoints proxied to ai-service.
-	mux.HandleFunc("GET /api/v1/ai/status", requireAuth("viewer", proxyAIHandler(http.MethodGet, "status")))
-
-	mux.HandleFunc("POST /api/v1/ai/log-analysis/analyze", requireAuth("viewer", proxyAIHandler("log-analysis/analyze")))
-	mux.HandleFunc("POST /api/v1/ai/advisor/generate", requireAuth("viewer", proxyAIHandler("advisor/generate")))
-	mux.HandleFunc("POST /api/v1/ai/advisor/auto", requireAuth("viewer", proxyAIHandler("advisor/auto")))
-	mux.HandleFunc("POST /api/v1/ai/task/predict-duration", requireAuth("viewer", proxyAIHandler("task/predict-duration")))
-	mux.HandleFunc("POST /api/v1/ai/trend/analyze", requireAuth("viewer", proxyAIHandler("trend/analyze")))
-	mux.HandleFunc("POST /api/v1/ai/task/create", requireAuth("operator", proxyAIHandler("task/create")))
-	mux.HandleFunc("POST /api/v1/ai/chat", requireAuth("viewer", proxyAIHandler("chat")))
-	mux.HandleFunc("GET /api/v1/ai/chat/ws", requireAuth("viewer", proxyWSHandler("chat/ws")))
-	mux.HandleFunc("GET /api/v1/ai/conversations", requireAuth("viewer", proxyAIHandler(http.MethodGet, "conversations")))
-	// Webhook endpoint for external event triggers (proxied to scheduler).
-	mux.HandleFunc("POST /api/v1/events/receive", requireAuth("operator", proxySchedulerHandler("events/publish")))
-
-	mux.HandleFunc("GET /api/v1/ai/conversations/", requireAuth("viewer", func(w http.ResponseWriter, r *http.Request) {
+	engine.GET("/api/v1/ai/status", wrapHTTPHandler(requireAuth("viewer", proxyAIHandler(http.MethodGet, "status"))))
+	engine.POST("/api/v1/ai/log-analysis/analyze", wrapHTTPHandler(requireAuth("viewer", proxyAIHandler("log-analysis/analyze"))))
+	engine.POST("/api/v1/ai/advisor/generate", wrapHTTPHandler(requireAuth("viewer", proxyAIHandler("advisor/generate"))))
+	engine.POST("/api/v1/ai/advisor/auto", wrapHTTPHandler(requireAuth("viewer", proxyAIHandler("advisor/auto"))))
+	engine.POST("/api/v1/ai/task/predict-duration", wrapHTTPHandler(requireAuth("viewer", proxyAIHandler("task/predict-duration"))))
+	engine.POST("/api/v1/ai/trend/analyze", wrapHTTPHandler(requireAuth("viewer", proxyAIHandler("trend/analyze"))))
+	engine.POST("/api/v1/ai/task/create", wrapHTTPHandler(requireAuth("operator", proxyAIHandler("task/create"))))
+	engine.POST("/api/v1/ai/chat", wrapHTTPHandler(requireAuth("viewer", proxyAIHandler("chat"))))
+	engine.GET("/api/v1/ai/chat/ws", wrapHTTPHandler(requireAuth("viewer", proxyWSHandler("chat/ws"))))
+	engine.GET("/api/v1/ai/conversations", wrapHTTPHandler(requireAuth("viewer", proxyAIHandler(http.MethodGet, "conversations"))))
+	engine.POST("/api/v1/events/receive", wrapHTTPHandler(requireAuth("operator", proxySchedulerHandler("events/publish"))))
+	engine.GET("/api/v1/ai/conversations/*rest", wrapHTTPHandler(requireAuth("viewer", func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.TrimPrefix(r.URL.Path, "/api/v1/ai/conversations/")
 		proxyAIHandler(http.MethodGet, "conversations/"+rest)(w, r)
-	}))
+	})))
 
 	// Serve web console static files.
-	mux.Handle("/", http.FileServer(http.Dir("web")))
+	engine.NoRoute(gin.WrapH(http.FileServer(http.Dir("web"))))
 
-	return metrics.Instrument("api", tenant.Middleware(mux))
+	return metrics.Instrument("api", tenant.Middleware(engine))
+}
+
+func wrapHTTPHandler(next http.HandlerFunc) gin.HandlerFunc {
+	return gin.WrapF(next)
+}
+
+func wrapHTTPHandlerWithParams(next http.HandlerFunc, paramNames ...string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		req := c.Request.Clone(c.Request.Context())
+		for _, name := range paramNames {
+			req.SetPathValue(name, c.Param(name))
+		}
+		next(c.Writer, req)
+	}
 }
 
 // requireAuth wraps an http.HandlerFunc to require JWT auth and a minimum role.
@@ -87,15 +103,20 @@ func requireAuth(minimumRole string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims := middleware.GetClaims(r.Context())
 		if claims == nil {
-			// Try to extract and parse Bearer token from header.
+			// Try token from Bearer header or query string (for WebSocket auth).
+			token := ""
 			auth := r.Header.Get("Authorization")
-			if auth == "" || !hasBearerPrefix(auth) {
+			if auth != "" && hasBearerPrefix(auth) {
+				token = auth[7:] // len("Bearer ") = 7
+			} else if qt := r.URL.Query().Get("token"); qt != "" {
+				token = qt
+			}
+			if token == "" {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				_, _ = w.Write([]byte(`{"error":"authentication required"}`))
 				return
 			}
-			token := auth[7:] // len("Bearer ") = 7
 			parsed, err := middleware.ParseToken(token)
 			if err != nil {
 				w.Header().Set("Content-Type", "application/json")

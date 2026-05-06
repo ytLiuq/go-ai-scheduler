@@ -12,7 +12,6 @@ import (
 	"github.com/example/go-ai-scheduler/internal/api/handler"
 	apiservice "github.com/example/go-ai-scheduler/internal/api/service"
 	"github.com/example/go-ai-scheduler/internal/model"
-	"github.com/example/go-ai-scheduler/internal/pkg/logger"
 	"github.com/example/go-ai-scheduler/internal/repo/teststore"
 	schedulerdispatch "github.com/example/go-ai-scheduler/internal/scheduler/dispatch"
 	schedulergrpc "github.com/example/go-ai-scheduler/internal/scheduler/grpcserver"
@@ -20,8 +19,9 @@ import (
 	"github.com/example/go-ai-scheduler/internal/scheduler/trigger"
 	workerapp "github.com/example/go-ai-scheduler/internal/worker"
 	workergrpc "github.com/example/go-ai-scheduler/internal/worker/grpcserver"
-	"github.com/example/go-ai-scheduler/internal/worker/heartbeat"
-	"github.com/example/go-ai-scheduler/internal/worker/reporter"
+	"log/slog"
+	"os"
+
 	"google.golang.org/grpc"
 )
 
@@ -31,7 +31,7 @@ func TestHTTPInternalProtocolEndToEnd(t *testing.T) {
 	taskRepo := teststore.NewTaskRepository()
 	instanceRepo := teststore.NewTaskInstanceRepository()
 	workerRepo := teststore.NewWorkerRepository()
-	logr := logger.New("test-http")
+	logr := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	router := route.NewRouter(workerRepo)
 	dispatcher := schedulerdispatch.NewClient()
@@ -49,7 +49,7 @@ func TestHTTPInternalProtocolEndToEnd(t *testing.T) {
 	}))
 	defer successTarget.Close()
 
-	reportClient := reporter.NewClient("http", "")
+	reportClient := workerapp.NewReportClient("http", "")
 	workerHandler := workerapp.NewHandler("worker-http-1", reportClient, logr, workerapp.HandlerConfig{})
 	workerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -63,7 +63,7 @@ func TestHTTPInternalProtocolEndToEnd(t *testing.T) {
 	}))
 	defer workerServer.Close()
 
-	heartbeatClient := heartbeat.NewClient(schedulerServer.URL, "", "http")
+	heartbeatClient := workerapp.NewHeartbeatClient(schedulerServer.URL, "", "http")
 	err := heartbeatClient.Register(context.Background(), apiservice.WorkerRegistrationRequest{
 		WorkerID:       "worker-http-1",
 		Hostname:       "worker-http-host",
@@ -93,7 +93,7 @@ func TestHTTPInternalProtocolEndToEnd(t *testing.T) {
 
 	loopCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr,50*time.Millisecond, schedulerServer.URL, 0, nil, nil).Start(loopCtx)
+	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, schedulerServer.URL, 0, nil, nil).Start(loopCtx)
 
 	waitForStatus(t, instanceRepo, "success")
 }
@@ -104,7 +104,7 @@ func TestGRPCInternalProtocolEndToEnd(t *testing.T) {
 	taskRepo := teststore.NewTaskRepository()
 	instanceRepo := teststore.NewTaskInstanceRepository()
 	workerRepo := teststore.NewWorkerRepository()
-	logr := logger.New("test-grpc")
+	logr := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	router := route.NewRouter(workerRepo)
 	dispatcher := schedulerdispatch.NewClient()
@@ -129,7 +129,7 @@ func TestGRPCInternalProtocolEndToEnd(t *testing.T) {
 	}))
 	defer successTarget.Close()
 
-	reportClient := reporter.NewClient("grpc", schedulerLis.Addr().String())
+	reportClient := workerapp.NewReportClient("grpc", schedulerLis.Addr().String())
 	workerHandler := workerapp.NewHandler("worker-grpc-1", reportClient, logr, workerapp.HandlerConfig{})
 
 	workerLis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -145,7 +145,7 @@ func TestGRPCInternalProtocolEndToEnd(t *testing.T) {
 	}()
 	defer workerServer.Stop()
 
-	heartbeatClient := heartbeat.NewClient("", schedulerLis.Addr().String(), "grpc")
+	heartbeatClient := workerapp.NewHeartbeatClient("", schedulerLis.Addr().String(), "grpc")
 	err = heartbeatClient.Register(context.Background(), apiservice.WorkerRegistrationRequest{
 		WorkerID:       "worker-grpc-1",
 		Hostname:       "worker-grpc-host",
@@ -175,7 +175,7 @@ func TestGRPCInternalProtocolEndToEnd(t *testing.T) {
 
 	loopCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr,50*time.Millisecond, "", 0, nil, nil).Start(loopCtx)
+	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, "", 0, nil, nil).Start(loopCtx)
 
 	waitForStatus(t, instanceRepo, "success")
 }
@@ -186,7 +186,7 @@ func TestHTTPInternalProtocolRetryThenSuccess(t *testing.T) {
 	taskRepo := teststore.NewTaskRepository()
 	instanceRepo := teststore.NewTaskInstanceRepository()
 	workerRepo := teststore.NewWorkerRepository()
-	logr := logger.New("test-http-retry")
+	logr := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	router := route.NewRouter(workerRepo)
 	dispatcher := schedulerdispatch.NewClient()
@@ -212,7 +212,7 @@ func TestHTTPInternalProtocolRetryThenSuccess(t *testing.T) {
 	}))
 	defer flakyTarget.Close()
 
-	reportClient := reporter.NewClient("http", "")
+	reportClient := workerapp.NewReportClient("http", "")
 	workerHandler := workerapp.NewHandler("worker-http-retry-1", reportClient, logr, workerapp.HandlerConfig{})
 	workerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -224,7 +224,7 @@ func TestHTTPInternalProtocolRetryThenSuccess(t *testing.T) {
 	}))
 	defer workerServer.Close()
 
-	heartbeatClient := heartbeat.NewClient(schedulerServer.URL, "", "http")
+	heartbeatClient := workerapp.NewHeartbeatClient(schedulerServer.URL, "", "http")
 	err := heartbeatClient.Register(context.Background(), apiservice.WorkerRegistrationRequest{
 		WorkerID:       "worker-http-retry-1",
 		Hostname:       "worker-http-retry-host",
@@ -254,7 +254,7 @@ func TestHTTPInternalProtocolRetryThenSuccess(t *testing.T) {
 
 	loopCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr,50*time.Millisecond, schedulerServer.URL, 0, nil, nil).Start(loopCtx)
+	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, schedulerServer.URL, 0, nil, nil).Start(loopCtx)
 
 	waitForRetrySuccess(t, instanceRepo)
 }
@@ -265,7 +265,7 @@ func TestGRPCInternalProtocolRetryThenSuccess(t *testing.T) {
 	taskRepo := teststore.NewTaskRepository()
 	instanceRepo := teststore.NewTaskInstanceRepository()
 	workerRepo := teststore.NewWorkerRepository()
-	logr := logger.New("test-grpc-retry")
+	logr := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	router := route.NewRouter(workerRepo)
 	dispatcher := schedulerdispatch.NewClient()
@@ -295,7 +295,7 @@ func TestGRPCInternalProtocolRetryThenSuccess(t *testing.T) {
 	}))
 	defer flakyTarget.Close()
 
-	reportClient := reporter.NewClient("grpc", schedulerLis.Addr().String())
+	reportClient := workerapp.NewReportClient("grpc", schedulerLis.Addr().String())
 	workerHandler := workerapp.NewHandler("worker-grpc-retry-1", reportClient, logr, workerapp.HandlerConfig{})
 
 	workerLis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -311,7 +311,7 @@ func TestGRPCInternalProtocolRetryThenSuccess(t *testing.T) {
 	}()
 	defer workerServer.Stop()
 
-	heartbeatClient := heartbeat.NewClient("", schedulerLis.Addr().String(), "grpc")
+	heartbeatClient := workerapp.NewHeartbeatClient("", schedulerLis.Addr().String(), "grpc")
 	err = heartbeatClient.Register(context.Background(), apiservice.WorkerRegistrationRequest{
 		WorkerID:       "worker-grpc-retry-1",
 		Hostname:       "worker-grpc-retry-host",
@@ -341,7 +341,7 @@ func TestGRPCInternalProtocolRetryThenSuccess(t *testing.T) {
 
 	loopCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr,50*time.Millisecond, "", 0, nil, nil).Start(loopCtx)
+	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, "", 0, nil, nil).Start(loopCtx)
 
 	waitForRetrySuccess(t, instanceRepo)
 }
@@ -352,7 +352,7 @@ func TestHTTPInternalProtocolTimeoutRetryThenSuccess(t *testing.T) {
 	taskRepo := teststore.NewTaskRepository()
 	instanceRepo := teststore.NewTaskInstanceRepository()
 	workerRepo := teststore.NewWorkerRepository()
-	logr := logger.New("test-http-timeout-retry")
+	logr := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	router := route.NewRouter(workerRepo)
 	dispatcher := schedulerdispatch.NewClient()
@@ -377,7 +377,7 @@ func TestHTTPInternalProtocolTimeoutRetryThenSuccess(t *testing.T) {
 	}))
 	defer sleepyTarget.Close()
 
-	reportClient := reporter.NewClient("http", "")
+	reportClient := workerapp.NewReportClient("http", "")
 	workerHandler := workerapp.NewHandler("worker-http-timeout-retry-1", reportClient, logr, workerapp.HandlerConfig{})
 	workerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -389,7 +389,7 @@ func TestHTTPInternalProtocolTimeoutRetryThenSuccess(t *testing.T) {
 	}))
 	defer workerServer.Close()
 
-	heartbeatClient := heartbeat.NewClient(schedulerServer.URL, "", "http")
+	heartbeatClient := workerapp.NewHeartbeatClient(schedulerServer.URL, "", "http")
 	err := heartbeatClient.Register(context.Background(), apiservice.WorkerRegistrationRequest{
 		WorkerID:       "worker-http-timeout-retry-1",
 		Hostname:       "worker-http-timeout-retry-host",
@@ -419,7 +419,7 @@ func TestHTTPInternalProtocolTimeoutRetryThenSuccess(t *testing.T) {
 
 	loopCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr,50*time.Millisecond, schedulerServer.URL, 0, nil, nil).Start(loopCtx)
+	go trigger.NewLoop(taskRepo, instanceRepo, router, dispatcher, logr, 50*time.Millisecond, schedulerServer.URL, 0, nil, nil).Start(loopCtx)
 
 	waitForRetryStatusSuccess(t, instanceRepo, "timeout")
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -15,12 +16,11 @@ import (
 	"github.com/example/go-ai-scheduler/internal/ai/tools"
 	"github.com/example/go-ai-scheduler/internal/app"
 	"github.com/example/go-ai-scheduler/internal/config"
-	"github.com/example/go-ai-scheduler/internal/pkg/logger"
 )
 
 func main() {
 	cfg := config.Default("ai-service")
-	l := logger.New(cfg.ServiceName)
+	l := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}).WithAttrs([]slog.Attr{slog.String("service", cfg.ServiceName)}))
 	resources, cleanup := app.BuildResources(cfg, l)
 	defer cleanup()
 
@@ -32,8 +32,7 @@ func main() {
 	}
 	llm := adapter.New(llmConfig)
 	if llm != nil && llm.Enabled() {
-		l.Printf("LLM adapter configured: endpoint=%s model=%s", llmConfig.Endpoint, llmConfig.Model)
-		// Configure fallback LLM if env vars are set.
+		l.Debug("LLM adapter configured", "endpoint", llmConfig.Endpoint, "model", llmConfig.Model)
 		fbCfg := adapter.Config{
 			Endpoint: os.Getenv("LLM_FALLBACK_ENDPOINT"),
 			APIKey:   os.Getenv("LLM_FALLBACK_API_KEY"),
@@ -42,17 +41,16 @@ func main() {
 		}
 		if fb := adapter.New(fbCfg); fb != nil {
 			llm.SetFallback(fb)
-			l.Printf("LLM fallback configured: endpoint=%s model=%s", fbCfg.Endpoint, fbCfg.Model)
+			l.Debug("LLM fallback configured", "endpoint", fbCfg.Endpoint, "model", fbCfg.Model)
 		}
 	} else {
-		l.Printf("LLM adapter not configured, running heuristics-only mode")
+		l.Info("LLM adapter not configured, running heuristics-only mode")
 	}
 
-	// Wire agent tools and conversation store.
 	registry := tools.NewRegistry(tools.AllTools(resources.Repositories)...)
 	store := memory.NewStore(resources.DB)
 
-	l.Printf("agent tools registered: %d", len(registry.Definitions()))
+	l.Debug("agent tools registered", "count", len(registry.Definitions()))
 
 	rateLimitRPM, _ := strconv.Atoi(os.Getenv("AI_RATE_LIMIT_RPM"))
 	var rdb *redis.Client
@@ -64,36 +62,35 @@ func main() {
 		Handler: ai.NewRouter(llm, resources.Repositories, registry, store, rdb, rateLimitRPM),
 	}
 
-	// Start periodic cleanup of old AI analysis records (retain 90 days).
 	go func() {
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
 		cutoff := time.Now().Add(-90 * 24 * time.Hour)
 		if n, err := resources.Repositories.AIAnalysis.DeleteOldRecords(context.Background(), cutoff); err != nil {
-			l.Printf("ai analysis cleanup error: %v", err)
+			l.Warn("ai analysis cleanup error", "error", err)
 		} else if n > 0 {
-			l.Printf("ai analysis cleanup: deleted %d records older than 90 days", n)
+			l.Debug("ai analysis cleanup: deleted old records", "count", n, "retention", "90d")
 		}
 		for range ticker.C {
 			cutoff := time.Now().Add(-90 * 24 * time.Hour)
 			if n, err := resources.Repositories.AIAnalysis.DeleteOldRecords(context.Background(), cutoff); err != nil {
-				l.Printf("ai analysis cleanup error: %v", err)
+				l.Warn("ai analysis cleanup error", "error", err)
 			} else if n > 0 {
-				l.Printf("ai analysis cleanup: deleted %d records older than 90 days", n)
+				l.Debug("ai analysis cleanup: deleted old records", "count", n, "retention", "90d")
 			}
-			// Cleanup old conversations (>30 days inactive).
 			convCutoff := time.Now().Add(-30 * 24 * time.Hour)
 			if n, err := store.DeleteOldConversations(context.Background(), convCutoff); err != nil {
-				l.Printf("conversation cleanup error: %v", err)
+				l.Warn("conversation cleanup error", "error", err)
 			} else if n > 0 {
-				l.Printf("conversation cleanup: deleted messages from %d old conversations", n)
+				l.Debug("conversation cleanup: deleted messages from old conversations", "count", n)
 			}
 		}
 	}()
 
-	l.Printf("starting ai-service http server on %s", cfg.HTTPAddr)
+	l.Info("starting ai-service http server", "addr", cfg.HTTPAddr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		l.Fatalf("ai-service exited with error: %v", err)
+		l.Error("ai-service exited with error", "error", err)
+		os.Exit(1)
 	}
 }
 

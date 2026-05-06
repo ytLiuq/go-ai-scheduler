@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/example/go-ai-scheduler/internal/audit"
 	"github.com/example/go-ai-scheduler/internal/model"
 	"github.com/example/go-ai-scheduler/internal/tenant"
 	"github.com/example/go-ai-scheduler/internal/pkg/cronexpr"
@@ -39,17 +38,18 @@ type TaskUpsertRequest struct {
 	RouteStrategy   string            `json:"route_strategy"`
 	Labels          map[string]string `json:"labels"`
 	NextTriggerTime time.Time         `json:"next_trigger_time"`
-	TenantID        int64     `json:"tenant_id"`
+	TenantID        int64             `json:"tenant_id"`
+	DependsOn       []int64           `json:"depends_on"`
 }
 
 // TaskService manages task definitions.
 type TaskService struct {
 	repo    repo.TaskRepository
-	auditor *audit.Auditor
+	auditor *Auditor
 }
 
 // NewTaskService creates a TaskService.
-func NewTaskService(repo repo.TaskRepository, auditor *audit.Auditor) *TaskService {
+func NewTaskService(repo repo.TaskRepository, auditor *Auditor) *TaskService {
 	return &TaskService{repo: repo, auditor: auditor}
 }
 
@@ -57,7 +57,7 @@ func (s *TaskService) audit(ctx context.Context, action string, id int64, detail
 	if s.auditor == nil {
 		return
 	}
-	s.auditor.Record(ctx, audit.Entry{
+	s.auditor.Record(ctx, AuditEntry{
 		Action:       action,
 		ResourceType: "task",
 		ResourceID:   strconv.FormatInt(id, 10),
@@ -69,7 +69,7 @@ func (s *TaskService) auditErr(ctx context.Context, action string, id int64, err
 	if s.auditor == nil {
 		return
 	}
-	s.auditor.Record(ctx, audit.Entry{
+	s.auditor.Record(ctx, AuditEntry{
 		Action:       action,
 		ResourceType: "task",
 		ResourceID:   strconv.FormatInt(id, 10),
@@ -88,6 +88,9 @@ func (s *TaskService) CreateTask(ctx context.Context, req TaskUpsertRequest) (*m
 		task.TenantID = tenant.FromContext(ctx)
 	}
 	if err := s.repo.CreateTask(ctx, task); err != nil {
+		return nil, err
+	}
+	if err := s.syncDependencies(ctx, task.ID, req.DependsOn); err != nil {
 		return nil, err
 	}
 	metrics.DefaultRegistry.IncCounter("tasks_mutations_total", map[string]string{"action": "create"})
@@ -125,6 +128,9 @@ func (s *TaskService) UpdateTask(ctx context.Context, id int64, req TaskUpsertRe
 		}
 	}
 	if err := s.repo.UpdateTask(ctx, task); err != nil {
+		return nil, err
+	}
+	if err := s.syncDependencies(ctx, task.ID, req.DependsOn); err != nil {
 		return nil, err
 	}
 	metrics.DefaultRegistry.IncCounter("tasks_mutations_total", map[string]string{"action": "update"})
@@ -247,6 +253,39 @@ func (s *TaskService) ListTasks(ctx context.Context) ([]*model.Task, error) {
 		return s.repo.ListTasksByTenant(ctx, tid)
 	}
 	return s.repo.ListTasks(ctx)
+}
+
+// syncDependencies reconciles the dependency list for a task.
+func (s *TaskService) syncDependencies(ctx context.Context, taskID int64, dependsOn []int64) error {
+	existing, err := s.repo.ListUpstreamDeps(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	existingSet := make(map[int64]bool)
+	for _, id := range existing {
+		existingSet[id] = true
+	}
+	wantedSet := make(map[int64]bool)
+	for _, id := range dependsOn {
+		wantedSet[id] = true
+	}
+	// Remove deps that are no longer wanted.
+	for id := range existingSet {
+		if !wantedSet[id] {
+			if err := s.repo.RemoveDependency(ctx, taskID, id); err != nil {
+				return err
+			}
+		}
+	}
+	// Add new deps.
+	for id := range wantedSet {
+		if !existingSet[id] {
+			if err := s.repo.AddDependency(ctx, taskID, id); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *TaskService) checkTenant(ctx context.Context, task *model.Task) error {

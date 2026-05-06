@@ -1,4 +1,4 @@
-package sandbox
+package worker
 
 import (
 	"os"
@@ -14,7 +14,7 @@ const (
 
 // applyResourceLimits configures cgroups v2 limits for the command.
 // Falls back silently if cgroups are unavailable.
-func applyResourceLimits(cmd *exec.Cmd, cfg Config) {
+func applyResourceLimits(cmd *exec.Cmd, cfg SandboxConfig) {
 	cgPath := filepath.Join(cgroupRoot, taskCgroupDir)
 	if err := os.MkdirAll(cgPath, 0755); err != nil {
 		return // cgroups not available

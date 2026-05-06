@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -160,5 +159,3 @@ type StoredMessage struct {
 	Content string
 }
 
-// Logf is a package-level logger override for debugging.
-var Logf = log.Printf

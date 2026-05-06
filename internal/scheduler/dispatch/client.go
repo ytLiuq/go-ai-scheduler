@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/example/go-ai-scheduler/internal/model"
-	"github.com/example/go-ai-scheduler/internal/rpc"
 	"github.com/example/go-ai-scheduler/internal/scheduler/ratelimit"
 	schedulerv1 "github.com/example/go-ai-scheduler/proto/gen/scheduler/v1"
 	"google.golang.org/grpc"
@@ -39,7 +38,7 @@ func NewClientWithRateLimiter(dispatchRatePerSec int) *Client {
 }
 
 // Dispatch sends one task to the given worker. Honors rate limit if configured.
-func (c *Client) Dispatch(ctx context.Context, worker *model.WorkerNode, req rpc.ExecuteTaskRequest) error {
+func (c *Client) Dispatch(ctx context.Context, worker *model.WorkerNode, req model.ExecuteTaskRequest) error {
 	if c.rateLimiter != nil {
 		if !c.rateLimiter.Allow() {
 			return fmt.Errorf("dispatch rate limit exceeded, wait %s", c.rateLimiter.WaitTime(1))
@@ -104,7 +103,7 @@ func (c *Client) RateLimiter() *ratelimit.TokenBucket {
 	return c.rateLimiter
 }
 
-func (c *Client) dispatchGRPC(ctx context.Context, target string, req rpc.ExecuteTaskRequest) error {
+func (c *Client) dispatchGRPC(ctx context.Context, target string, req model.ExecuteTaskRequest) error {
 	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -137,7 +136,7 @@ func (c *Client) dispatchGRPC(ctx context.Context, target string, req rpc.Execut
 	return nil
 }
 
-func (c *Client) dispatchHTTP(ctx context.Context, callbackURL string, req rpc.ExecuteTaskRequest) error {
+func (c *Client) dispatchHTTP(ctx context.Context, callbackURL string, req model.ExecuteTaskRequest) error {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("marshal dispatch request: %w", err)

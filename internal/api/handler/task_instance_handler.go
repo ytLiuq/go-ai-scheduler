@@ -42,12 +42,12 @@ func (h *TaskInstanceHandler) List(w http.ResponseWriter, r *http.Request) {
 		params.TaskID = v
 	}
 
-	instances, err := h.service.ListInstancesWithParams(r.Context(), params)
+	result, err := h.service.ListInstancesWithParams(r.Context(), params)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, instances)
+	writeJSON(w, http.StatusOK, result)
 }
 
 // Get handles task instance detail lookup.

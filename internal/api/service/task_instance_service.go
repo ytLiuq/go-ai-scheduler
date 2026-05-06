@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"sort"
-	"time"
 
 	"github.com/example/go-ai-scheduler/internal/model"
 	"github.com/example/go-ai-scheduler/internal/repo"
@@ -43,8 +42,14 @@ func (s *TaskInstanceService) ListInstances(ctx context.Context) ([]*model.TaskI
 	return s.repo.ListInstances(ctx)
 }
 
+// InstanceListResult wraps instance list with total count for pagination.
+type InstanceListResult struct {
+	Instances []*model.TaskInstance `json:"instances"`
+	Total     int                   `json:"total"`
+}
+
 // ListInstancesWithParams returns instances filtered by the given params.
-func (s *TaskInstanceService) ListInstancesWithParams(ctx context.Context, params ListInstancesParams) ([]*model.TaskInstance, error) {
+func (s *TaskInstanceService) ListInstancesWithParams(ctx context.Context, params ListInstancesParams) (*InstanceListResult, error) {
 	if params.TaskID > 0 {
 		instances, err := s.repo.ListInstancesByTaskID(ctx, params.TaskID)
 		if err != nil {
@@ -59,13 +64,28 @@ func (s *TaskInstanceService) ListInstancesWithParams(ctx context.Context, param
 			}
 			instances = filtered
 		}
-		return paginateInstances(instances, params.Limit, params.Offset), nil
+		total := len(instances)
+		return &InstanceListResult{
+			Instances: paginateInstances(instances, params.Limit, params.Offset),
+			Total:     total,
+		}, nil
 	}
 	if params.Status != "" {
-		return s.repo.ListInstancesByStatus(ctx, params.Status, params.Limit)
+		instances, err := s.repo.ListInstancesByStatus(ctx, params.Status, params.Limit)
+		if err != nil {
+			return nil, err
+		}
+		return &InstanceListResult{Instances: instances, Total: len(instances)}, nil
 	}
-	// Use time-range query with pagination.
-	return s.repo.ListInstancesByTimeRange(ctx, time.Time{}, time.Now(), params.Limit, params.Offset)
+	// List all instances and paginate in memory.
+	all, err := s.repo.ListInstances(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &InstanceListResult{
+		Instances: paginateInstances(all, params.Limit, params.Offset),
+		Total:     len(all),
+	}, nil
 }
 
 func paginateInstances(instances []*model.TaskInstance, limit, offset int) []*model.TaskInstance {

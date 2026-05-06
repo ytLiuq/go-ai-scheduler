@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -27,11 +27,11 @@ type Payload struct {
 type Alerter struct {
 	webhookURL string
 	client     *http.Client
-	logger     *log.Logger
+	logger     *slog.Logger
 }
 
 // New creates an Alerter. If webhookURL is empty, alerts are logged to stdout.
-func New(webhookURL string, logger *log.Logger) *Alerter {
+func New(webhookURL string, logger *slog.Logger) *Alerter {
 	return &Alerter{
 		webhookURL: webhookURL,
 		client:     &http.Client{Timeout: 5 * time.Second},
@@ -46,31 +46,31 @@ func (a *Alerter) Send(ctx context.Context, p Payload) {
 
 	if a.webhookURL == "" {
 		data, _ := json.Marshal(p)
-		a.logger.Printf("ALERT %s", string(data))
+		a.logger.Debug("ALERT", "data", string(data))
 		return
 	}
 
 	body, err := json.Marshal(p)
 	if err != nil {
-		a.logger.Printf("alert marshal error: %v", err)
+		a.logger.Error("alert marshal error", "error", err)
 		return
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.webhookURL, bytes.NewReader(body))
 	if err != nil {
-		a.logger.Printf("alert build request error: %v", err)
+		a.logger.Error("alert build request error", "error", err)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		a.logger.Printf("alert send error: %v", err)
+		a.logger.Error("alert send error", "error", err)
 		return
 	}
 	resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
-		a.logger.Printf("alert webhook returned status %d", resp.StatusCode)
+		a.logger.Warn("alert webhook returned non-2xx status", "status", resp.StatusCode)
 	}
 }

@@ -17,6 +17,7 @@ spec:
       containers:
         - name: scheduler
           image: go-ai-scheduler:latest
+          command: ["/app/scheduler"]
           ports:
             - containerPort: 8080
               name: http

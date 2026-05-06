@@ -1,4 +1,4 @@
-package sandbox
+package worker
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 )
 
 func TestNewSandbox(t *testing.T) {
-	sb, err := New("", Config{})
+	sb, err := NewSandbox("", SandboxConfig{})
 	if err != nil {
 		t.Fatalf("new sandbox: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestNewSandbox(t *testing.T) {
 }
 
 func TestSandboxCleanup(t *testing.T) {
-	sb, err := New("", Config{})
+	sb, err := NewSandbox("", SandboxConfig{})
 	if err != nil {
 		t.Fatalf("new sandbox: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestSandboxCleanup(t *testing.T) {
 }
 
 func TestSandboxShellExec(t *testing.T) {
-	sb, err := New("", Config{})
+	sb, err := NewSandbox("", SandboxConfig{})
 	if err != nil {
 		t.Fatalf("new sandbox: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestSandboxShellExec(t *testing.T) {
 }
 
 func TestSandboxShellExecWithEnv(t *testing.T) {
-	sb, err := New("", Config{})
+	sb, err := NewSandbox("", SandboxConfig{})
 	if err != nil {
 		t.Fatalf("new sandbox: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestSandboxShellExecWithEnv(t *testing.T) {
 }
 
 func TestSandboxShellExecTimeout(t *testing.T) {
-	sb, err := New("", Config{})
+	sb, err := NewSandbox("", SandboxConfig{})
 	if err != nil {
 		t.Fatalf("new sandbox: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestSandboxShellExecTimeout(t *testing.T) {
 
 func TestSandboxCustomBaseDir(t *testing.T) {
 	tmp := os.TempDir()
-	sb, err := New(tmp, Config{})
+	sb, err := NewSandbox(tmp, SandboxConfig{})
 	if err != nil {
 		t.Fatalf("new sandbox: %v", err)
 	}

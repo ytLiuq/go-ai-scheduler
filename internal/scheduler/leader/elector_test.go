@@ -2,13 +2,14 @@ package leader
 
 import (
 	"context"
+	"log/slog"
+	"os"
 	"testing"
-
-	"github.com/example/go-ai-scheduler/internal/pkg/logger"
 )
 
 func TestLocalElectorAcquire(t *testing.T) {
-	elector := New(nil, nil, logger.New("test-leader"))
+	l := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	elector := New(nil, nil, l)
 	if err := elector.Acquire(context.Background()); err != nil {
 		t.Fatalf("acquire leader: %v", err)
 	}

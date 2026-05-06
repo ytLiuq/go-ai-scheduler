@@ -3,8 +3,8 @@ package grpcserver
 import (
 	"context"
 
+	"github.com/example/go-ai-scheduler/internal/model"
 	schedulerv1 "github.com/example/go-ai-scheduler/proto/gen/scheduler/v1"
-	"github.com/example/go-ai-scheduler/internal/rpc"
 	workerapp "github.com/example/go-ai-scheduler/internal/worker"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -29,7 +29,7 @@ func Register(s *grpc.Server, impl *Server) {
 
 // ExecuteTask accepts one dispatch RPC.
 func (s *Server) ExecuteTask(ctx context.Context, req *schedulerv1.ExecuteTaskRequest) (*schedulerv1.ExecuteTaskResponse, error) {
-	s.handler.ExecuteAsync(ctx, rpc.ExecuteTaskRequest{
+	s.handler.ExecuteAsync(ctx, model.ExecuteTaskRequest{
 		ScheduleInstanceID: req.GetScheduleInstanceId(),
 		TaskID:             req.GetTaskId(),
 		TaskType:           req.GetTaskType(),

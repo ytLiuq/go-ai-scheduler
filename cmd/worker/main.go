@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -11,29 +11,29 @@ import (
 
 	apiservice "github.com/example/go-ai-scheduler/internal/api/service"
 	"github.com/example/go-ai-scheduler/internal/config"
-	"github.com/example/go-ai-scheduler/internal/pkg/logger"
 	"github.com/example/go-ai-scheduler/internal/pkg/metrics"
 	workerapp "github.com/example/go-ai-scheduler/internal/worker"
 	workergrpc "github.com/example/go-ai-scheduler/internal/worker/grpcserver"
-	"github.com/example/go-ai-scheduler/internal/worker/heartbeat"
-	"github.com/example/go-ai-scheduler/internal/worker/reporter"
+	
+	
 	"google.golang.org/grpc"
 )
 
 func main() {
 	cfg := config.Default("worker")
-	l := logger.New(cfg.ServiceName)
+	l := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}).WithAttrs([]slog.Attr{slog.String("service", cfg.ServiceName)}))
 	hostname, err := os.Hostname()
 	if err != nil {
-		log.Fatalf("read hostname: %v", err)
+		l.Error("read hostname", "error", err)
+		os.Exit(1)
 	}
 
 	workerID := os.Getenv("WORKER_ID")
 	if workerID == "" {
 		workerID = fmt.Sprintf("%s%s", hostname, cfg.HTTPAddr)
 	}
-	client := heartbeat.NewClient(cfg.SchedulerURL, cfg.SchedulerGRPCAddr, cfg.InternalProtocol)
-	reportClient := reporter.NewClient(cfg.InternalProtocol, cfg.SchedulerGRPCAddr)
+	client := workerapp.NewHeartbeatClient(cfg.SchedulerURL, cfg.SchedulerGRPCAddr, cfg.InternalProtocol)
+	reportClient := workerapp.NewReportClient(cfg.InternalProtocol, cfg.SchedulerGRPCAddr)
 	workerHandler := workerapp.NewHandler(workerID, reportClient, l, workerapp.HandlerConfig{
 		SandboxDir:     os.TempDir(),
 		MaxMemoryBytes: 256 * 1024 * 1024,
@@ -60,22 +60,25 @@ func main() {
 		})),
 	}
 	go func() {
-		l.Printf("worker http server started on %s", cfg.HTTPAddr)
+		l.Info("worker http server started", "addr", cfg.HTTPAddr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("worker http server: %v", err)
+			l.Error("worker http server", "error", err)
+			os.Exit(1)
 		}
 	}()
 
 	grpcListener, err := net.Listen("tcp", cfg.GRPCAddr)
 	if err != nil {
-		log.Fatalf("listen worker grpc: %v", err)
+		l.Error("listen worker grpc", "error", err)
+		os.Exit(1)
 	}
 	grpcServer := grpc.NewServer()
 	workergrpc.Register(grpcServer, workergrpc.NewServer(workerHandler))
 	go func() {
-		l.Printf("worker grpc server started on %s", cfg.GRPCAddr)
+		l.Info("worker grpc server started", "addr", cfg.GRPCAddr)
 		if err := grpcServer.Serve(grpcListener); err != nil {
-			log.Fatalf("worker grpc server: %v", err)
+			l.Error("worker grpc server", "error", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -83,10 +86,10 @@ func main() {
 
 	if ls := workerHandler.LocalStore(); ls != nil {
 		go ls.StartFlushLoop(ctx, 30*time.Second)
-		l.Printf("local store enabled, flush loop started")
+		l.Info("local store enabled, flush loop started")
 	}
 	workerHandler.StartDedupEviction(ctx, 5*time.Minute, 30*time.Second)
-	l.Printf("worker dedup eviction started")
+	l.Debug("worker dedup eviction started")
 
 	registerReq := apiservice.WorkerRegistrationRequest{
 		WorkerID:       workerID,
@@ -102,9 +105,10 @@ func main() {
 		},
 	}
 	if err := client.Register(ctx, registerReq); err != nil {
-		log.Fatalf("register worker: %v", err)
+		l.Error("register worker", "error", err)
+		os.Exit(1)
 	}
-	l.Printf("worker registered to scheduler=%s worker_id=%s", cfg.SchedulerURL, workerID)
+	l.Debug("worker registered to scheduler", "scheduler_url", cfg.SchedulerURL, "worker_id", workerID)
 
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
@@ -118,9 +122,9 @@ func main() {
 			ReportUnixMilli: time.Now().UnixMilli(),
 		}
 		if err := client.Heartbeat(ctx, heartbeatReq); err != nil {
-			l.Printf("heartbeat failed: %v", err)
+			l.Warn("heartbeat failed", "error", err)
 		} else {
-			l.Printf("heartbeat sent worker_id=%s", workerID)
+			l.Debug("heartbeat sent", "worker_id", workerID)
 		}
 		<-ticker.C
 	}

@@ -1,4 +1,4 @@
-package sandbox
+package worker
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 )
 
 // Config defines sandbox constraints for a single task run.
-type Config struct {
+type SandboxConfig struct {
 	WorkDir        string
 	MaxMemoryBytes int64
 	MaxCPUPercent  int // 1-100, or 0 to disable
@@ -21,11 +21,11 @@ type Config struct {
 // optional resource limits.
 type Sandbox struct {
 	workDir string
-	config  Config
+	config  SandboxConfig
 }
 
 // New creates a sandbox with a unique working directory under baseDir.
-func New(baseDir string, cfg Config) (*Sandbox, error) {
+func NewSandbox(baseDir string, cfg SandboxConfig) (*Sandbox, error) {
 	if baseDir == "" {
 		baseDir = os.TempDir()
 	}

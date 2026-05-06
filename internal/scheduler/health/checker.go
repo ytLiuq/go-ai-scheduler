@@ -2,7 +2,7 @@ package health
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/example/go-ai-scheduler/internal/api/service"
@@ -11,13 +11,13 @@ import (
 // Checker periodically evicts workers that have stopped sending heartbeats.
 type Checker struct {
 	workers *service.WorkerService
-	logger  *log.Logger
+	logger  *slog.Logger
 	timeout time.Duration
 	tick    time.Duration
 }
 
 // NewChecker creates a health Checker.
-func NewChecker(workers *service.WorkerService, logger *log.Logger, timeout, tick time.Duration) *Checker {
+func NewChecker(workers *service.WorkerService, logger *slog.Logger, timeout, tick time.Duration) *Checker {
 	return &Checker{
 		workers: workers,
 		logger:  logger,
@@ -38,9 +38,9 @@ func (c *Checker) Start(ctx context.Context) {
 		case <-ticker.C:
 			count, err := c.workers.EvictStaleWorkers(ctx, c.timeout)
 			if err != nil {
-				c.logger.Printf("health check failed: %v", err)
+				c.logger.Error("health check failed", "error", err)
 			} else if count > 0 {
-				c.logger.Printf("health check evicted %d stale worker(s)", count)
+				c.logger.Debug("health check evicted stale workers", "count", count)
 			}
 		}
 	}

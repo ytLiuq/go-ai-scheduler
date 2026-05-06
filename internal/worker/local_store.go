@@ -1,16 +1,15 @@
-package localstore
+package worker
 
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
 	apiservice "github.com/example/go-ai-scheduler/internal/api/service"
-	"github.com/example/go-ai-scheduler/internal/worker/reporter"
 )
 
 // StoredReport is a serialised task status report held for later delivery.
@@ -23,15 +22,15 @@ type StoredReport struct {
 // Store buffers task reports that could not be delivered to the scheduler
 // and retries delivery when connectivity is restored.
 type Store struct {
-	mu         sync.Mutex
-	dir        string
-	reporter   *reporter.Client
-	logger     *log.Logger
-	baseDir    string
+	mu       sync.Mutex
+	dir      string
+	reporter *ReportClient
+	logger   *slog.Logger
+	baseDir  string
 }
 
-// New creates a local store backed by the given directory.
-func New(baseDir string, reporter *reporter.Client, l *log.Logger) (*Store, error) {
+// NewStore creates a local store backed by the given directory.
+func NewStore(baseDir string, reporter *ReportClient, l *slog.Logger) (*Store, error) {
 	dir := filepath.Join(baseDir, "worker-local-store")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
@@ -56,16 +55,16 @@ func (s *Store) Buffer(schedulerURL string, report apiservice.TaskStatusReportRe
 	}
 	data, err := json.Marshal(sr)
 	if err != nil {
-		s.logger.Printf("localstore: marshal report failed schedule_instance_id=%s err=%v", report.ScheduleInstanceID, err)
+		s.logger.Warn("localstore: marshal report failed", "schedule_instance_id", report.ScheduleInstanceID, "error", err)
 		return
 	}
 
 	filename := filepath.Join(s.dir, report.ScheduleInstanceID+".json")
 	if err := os.WriteFile(filename, data, 0600); err != nil {
-		s.logger.Printf("localstore: buffer report failed schedule_instance_id=%s err=%v", report.ScheduleInstanceID, err)
+		s.logger.Warn("localstore: buffer report failed", "schedule_instance_id", report.ScheduleInstanceID, "error", err)
 		return
 	}
-	s.logger.Printf("localstore: buffered report schedule_instance_id=%s", report.ScheduleInstanceID)
+	s.logger.Info("localstore: buffered report", "schedule_instance_id", report.ScheduleInstanceID)
 }
 
 // Remove deletes a buffered report after successful delivery.
@@ -74,18 +73,17 @@ func (s *Store) Remove(scheduleInstanceID string) {
 	defer s.mu.Unlock()
 	filename := filepath.Join(s.dir, scheduleInstanceID+".json")
 	if err := os.Remove(filename); err != nil && !os.IsNotExist(err) {
-		s.logger.Printf("localstore: remove report failed schedule_instance_id=%s err=%v", scheduleInstanceID, err)
+		s.logger.Warn("localstore: remove report failed", "schedule_instance_id", scheduleInstanceID, "error", err)
 	}
 }
 
 // Flush attempts to deliver all buffered reports and removes them on success.
-// Returns the count of remaining undelivered reports.
 func (s *Store) Flush(ctx context.Context) int {
 	s.mu.Lock()
 	entries, err := os.ReadDir(s.dir)
 	s.mu.Unlock()
 	if err != nil {
-		s.logger.Printf("localstore: read dir failed: %v", err)
+		s.logger.Warn("localstore: read dir failed", "error", err)
 		return -1
 	}
 
@@ -97,13 +95,13 @@ func (s *Store) Flush(ctx context.Context) int {
 		filename := filepath.Join(s.dir, entry.Name())
 		data, err := os.ReadFile(filename)
 		if err != nil {
-			s.logger.Printf("localstore: read file %s failed: %v", filename, err)
+			s.logger.Warn("localstore: read file failed", "file", filename, "error", err)
 			remaining++
 			continue
 		}
 		var sr StoredReport
 		if err := json.Unmarshal(data, &sr); err != nil {
-			s.logger.Printf("localstore: unmarshal %s failed: %v", filename, err)
+			s.logger.Warn("localstore: unmarshal failed", "file", filename, "error", err)
 			_ = os.Remove(filename)
 			continue
 		}
@@ -112,13 +110,13 @@ func (s *Store) Flush(ctx context.Context) int {
 		err = s.reporter.Report(deliveryCtx, sr.SchedulerURL, sr.Report)
 		cancel()
 		if err != nil {
-			s.logger.Printf("localstore: flush failed for %s: %v", sr.Report.ScheduleInstanceID, err)
+			s.logger.Warn("localstore: flush failed", "schedule_instance_id", sr.Report.ScheduleInstanceID, "error", err)
 			remaining++
 			continue
 		}
 
 		_ = os.Remove(filename)
-		s.logger.Printf("localstore: flushed report schedule_instance_id=%s", sr.Report.ScheduleInstanceID)
+		s.logger.Info("localstore: flushed report", "schedule_instance_id", sr.Report.ScheduleInstanceID)
 	}
 	return remaining
 }
@@ -149,12 +147,12 @@ func (s *Store) StartFlushLoop(ctx context.Context, interval time.Duration) {
 	for {
 		select {
 		case <-ctx.Done():
-			s.logger.Printf("localstore flush loop stopped")
+			s.logger.Info("localstore flush loop stopped")
 			return
 		case <-ticker.C:
 			remaining := s.Flush(ctx)
 			if remaining > 0 {
-				s.logger.Printf("localstore: %d reports still pending after flush", remaining)
+				s.logger.Warn("localstore: reports still pending after flush", "count", remaining)
 			}
 		}
 	}

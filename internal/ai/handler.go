@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -590,6 +590,6 @@ func parseTaskNatural(w http.ResponseWriter, r *http.Request, llm *adapter.LLMAd
 
 func persistAIRecord(r *http.Request, aiRepo repo.AIAnalysisRepository, record *model.AIAnalysisRecord) {
 	if err := aiRepo.CreateRecord(r.Context(), record); err != nil {
-		log.Printf("persist ai analysis record failed: type=%s err=%v", record.AnalysisType, err)
+		slog.Warn("persist ai analysis record failed", "type", record.AnalysisType, "error", err)
 	}
 }

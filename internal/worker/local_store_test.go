@@ -1,21 +1,20 @@
-package localstore
+package worker
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
 
 	apiservice "github.com/example/go-ai-scheduler/internal/api/service"
-	"github.com/example/go-ai-scheduler/internal/worker/reporter"
 )
 
 func TestNewStore(t *testing.T) {
 	dir := os.TempDir()
-	rep := reporter.NewClient("http", "")
-	l := log.New(os.Stderr, "test", log.LstdFlags)
-	store, err := New(dir, rep, l)
+	rep := NewReportClient("http", "")
+	l := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	store, err := NewStore(dir, rep, l)
 	if err != nil {
 		t.Fatalf("new store: %v", err)
 	}
@@ -26,9 +25,9 @@ func TestNewStore(t *testing.T) {
 
 func TestBufferAndRemove(t *testing.T) {
 	dir := t.TempDir()
-	rep := reporter.NewClient("http", "")
-	l := log.New(os.Stderr, "test", log.LstdFlags)
-	store, err := New(dir, rep, l)
+	rep := NewReportClient("http", "")
+	l := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	store, err := NewStore(dir, rep, l)
 	if err != nil {
 		t.Fatalf("new store: %v", err)
 	}
@@ -52,9 +51,9 @@ func TestBufferAndRemove(t *testing.T) {
 
 func TestFlushWithNoServer(t *testing.T) {
 	dir := t.TempDir()
-	rep := reporter.NewClient("http", "")
-	l := log.New(os.Stderr, "test", log.LstdFlags)
-	store, err := New(dir, rep, l)
+	rep := NewReportClient("http", "")
+	l := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	store, err := NewStore(dir, rep, l)
 	if err != nil {
 		t.Fatalf("new store: %v", err)
 	}
@@ -79,9 +78,9 @@ func TestFlushWithNoServer(t *testing.T) {
 
 func TestStartFlushLoop(t *testing.T) {
 	dir := t.TempDir()
-	rep := reporter.NewClient("http", "")
-	l := log.New(os.Stderr, "test", log.LstdFlags)
-	store, err := New(dir, rep, l)
+	rep := NewReportClient("http", "")
+	l := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	store, err := NewStore(dir, rep, l)
 	if err != nil {
 		t.Fatalf("new store: %v", err)
 	}
