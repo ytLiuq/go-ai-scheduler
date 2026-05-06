@@ -39,6 +39,15 @@ jobs:
         with:
           go-version: "1.23"
 
+      - name: Setup protoc
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
+      - name: Generate proto
+        run: make proto
+
       - name: Run migrations
         run: |
           for f in migrations/*.sql; do
@@ -62,4 +71,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.23"
+      - name: Setup protoc
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+      - name: Generate proto
+        run: make proto
       - run: go vet ./...

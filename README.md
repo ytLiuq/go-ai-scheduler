@@ -144,10 +144,12 @@ Demo logins: `admin/admin123`, `operator/operator123`, `viewer/viewer123`
 
 ### Docker
 ```bash
-docker build -f Dockerfile.ai-service -t go-ai-scheduler .
-docker build -f Dockerfile.api -t go-ai-scheduler .
-docker build -f Dockerfile.scheduler -t go-ai-scheduler .
-docker build -f Dockerfile.worker -t go-ai-scheduler .
+docker build -t go-ai-scheduler .
+```
+Run individual services:
+```bash
+docker run go-ai-scheduler /app/scheduler
+docker run go-ai-scheduler /app/worker
 ```
 
 ### Kubernetes

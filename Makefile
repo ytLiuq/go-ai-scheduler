@@ -5,6 +5,10 @@ proto:
 		--go-grpc_out=. --go-grpc_opt=module=github.com/example/go-ai-scheduler \
 		proto/scheduler.proto
 
+.PHONY: build
+build: proto
+	go build ./cmd/...
+
 .PHONY: run-console
 run-console:
 	bash ./scripts/run-console.sh

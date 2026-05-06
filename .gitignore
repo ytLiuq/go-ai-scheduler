@@ -1,13 +1,13 @@
 .DS_Store
 .idea/
 .vscode/
-.codex
 .claude/
 bin/
 dist/
 tmp/
 *.log
 coverage.out
+proto/gen/
 /ai-service
 /api
 /migrate

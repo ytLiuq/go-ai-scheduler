@@ -1,44 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT_DIR"
-
-if [[ -f ".env.ai-service" ]]; then
-  # shellcheck disable=SC1091
-  source ".env.ai-service"
-fi
-
-if [[ "${REPO_BACKEND:-}" != "mysql" ]]; then
-  echo "run-console requires REPO_BACKEND=mysql" >&2
-  exit 1
-fi
-
-if [[ -z "${MYSQL_DSN:-}" ]]; then
-  echo "run-console requires MYSQL_DSN" >&2
-  exit 1
-fi
+load_env
+require_mysql
 
 AI_PID=""
 API_PID=""
 
-cleanup() {
-  local code=$?
-  if [[ -n "$AI_PID" ]] && kill -0 "$AI_PID" 2>/dev/null; then
-    kill "$AI_PID" 2>/dev/null || true
-  fi
-  if [[ -n "$API_PID" ]] && kill -0 "$API_PID" 2>/dev/null; then
-    kill "$API_PID" 2>/dev/null || true
-  fi
-  pkill -f '/cmd/ai-service' 2>/dev/null || true
-  pkill -f '/cmd/api' 2>/dev/null || true
-  pkill -x ai-service 2>/dev/null || true
-  pkill -x api 2>/dev/null || true
-  wait 2>/dev/null || true
-  exit "$code"
-}
-
-trap cleanup INT TERM EXIT
+trap 'cleanup "$AI_PID" "$API_PID" -- "/cmd/ai-service" "/cmd/api" "ai-service" "api"' INT TERM EXIT
 
 echo "Starting ai-service on ${APP_HTTP_ADDR:-:8083}..."
 go run ./cmd/ai-service &
