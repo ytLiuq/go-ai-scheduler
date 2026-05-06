@@ -3,7 +3,8 @@ package app
 import (
 	"context"
 	"database/sql"
-	"log"
+	"log/slog"
+	"os"
 	"time"
 
 	"github.com/example/go-ai-scheduler/internal/config"
@@ -20,7 +21,7 @@ type Resources struct {
 }
 
 // BuildResources initializes repositories, database, and Redis.
-func BuildResources(cfg config.Config, l *log.Logger) (*Resources, func()) {
+func BuildResources(cfg config.Config, l *slog.Logger) (*Resources, func()) {
 	res := &Resources{}
 	cleaners := make([]func(), 0)
 	cleanup := func() {
@@ -30,42 +31,50 @@ func BuildResources(cfg config.Config, l *log.Logger) (*Resources, func()) {
 	}
 
 	if !repo.IsMySQLBackend(cfg.RepoBackend) {
-		log.Fatalf("repository backend %q is not supported; set REPO_BACKEND=mysql", cfg.RepoBackend)
+		l.Error("repository backend not supported", "backend", cfg.RepoBackend)
+		os.Exit(1)
 	}
 
-	db, err := xmysql.Open(cfg.MySQLDSN)
+	gdb, err := xmysql.OpenGorm(cfg.MySQLDSN)
 	if err != nil {
-		log.Fatalf("init mysql repositories: %v", err)
+		l.Error("init mysql repositories", "error", err)
+		os.Exit(1)
+	}
+	db, err := gdb.DB()
+	if err != nil {
+		l.Error("get mysql sql db", "error", err)
+		os.Exit(1)
 	}
 	if cfg.AutoMigrate {
 		if err := xmysql.RunMigrations(db, cfg.MigrationDir); err != nil {
-			log.Fatalf("run migrations: %v", err)
+			l.Error("run migrations", "error", err)
+			os.Exit(1)
 		}
-		l.Printf("migrations applied from %s", cfg.MigrationDir)
+		l.Debug("migrations applied", "dir", cfg.MigrationDir)
 	}
-	bundle := repo.NewMySQLBundle(db)
+	bundle := repo.NewMySQLBundle(gdb)
 	if err := repo.ValidateBundle(bundle); err != nil {
-		log.Fatalf("invalid mysql repository bundle: %v", err)
+		l.Error("invalid mysql repository bundle", "error", err)
+		os.Exit(1)
 	}
 	res.Repositories = bundle
 	res.DB = db
 	cleaners = append(cleaners, func() { _ = db.Close() })
-	l.Printf("repository backend=mysql")
+	l.Debug("repository backend", "type", "mysql")
 
-	// Redis is optional — only connect if an address is configured.
 	if cfg.RedisAddr != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		redisClient, err := xredis.Open(ctx, cfg.RedisAddr)
 		if err != nil {
-			l.Printf("WARNING: redis unavailable at %s: %v — running without cache", cfg.RedisAddr, err)
+			l.Warn("redis unavailable, running without cache", "addr", cfg.RedisAddr, "error", err)
 		} else {
 			res.Redis = redisClient
 			cleaners = append(cleaners, func() { _ = redisClient.Close() })
-			l.Printf("redis connected at %s", cfg.RedisAddr)
+			l.Debug("redis connected", "addr", cfg.RedisAddr)
 		}
 	} else {
-		l.Printf("redis not configured — running without cache")
+		l.Info("redis not configured, running without cache")
 	}
 
 	return res, cleanup

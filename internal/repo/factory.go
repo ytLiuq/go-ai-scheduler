@@ -1,11 +1,11 @@
 package repo
 
 import (
-	"database/sql"
 	"fmt"
 	"strings"
 
 	mysqlrepo "github.com/example/go-ai-scheduler/internal/repo/mysql"
+	"gorm.io/gorm"
 )
 
 // Bundle groups repository implementations used by the scheduler runtime.
@@ -18,7 +18,7 @@ type Bundle struct {
 }
 
 // NewMySQLBundle builds repositories backed by one MySQL connection pool.
-func NewMySQLBundle(db *sql.DB) *Bundle {
+func NewMySQLBundle(db *gorm.DB) *Bundle {
 	return &Bundle{
 		Task:         mysqlrepo.NewTaskRepository(db),
 		TaskInstance: mysqlrepo.NewTaskInstanceRepository(db),

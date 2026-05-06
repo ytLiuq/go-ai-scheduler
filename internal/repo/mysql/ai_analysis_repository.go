@@ -2,54 +2,45 @@ package mysql
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"time"
 
 	"github.com/example/go-ai-scheduler/internal/model"
+	"gorm.io/gorm"
 )
 
 // AIAnalysisRepository persists AI analysis records to MySQL.
 type AIAnalysisRepository struct {
-	db *sql.DB
+	db *gorm.DB
 }
 
 // NewAIAnalysisRepository creates an AIAnalysisRepository.
-func NewAIAnalysisRepository(db *sql.DB) *AIAnalysisRepository {
+func NewAIAnalysisRepository(db *gorm.DB) *AIAnalysisRepository {
 	return &AIAnalysisRepository{db: db}
 }
 
 // CreateRecord inserts an AI analysis record.
 func (r *AIAnalysisRepository) CreateRecord(ctx context.Context, record *model.AIAnalysisRecord) error {
-	const query = `
-		INSERT INTO ai_analysis_record (instance_id, analysis_type, input_snapshot, output_json, confidence)
-		VALUES (?, ?, ?, ?, ?)
-	`
-	result, err := r.db.ExecContext(ctx, query,
-		record.InstanceID,
-		record.AnalysisType,
-		record.InputJSON,
-		record.OutputJSON,
-		record.Confidence,
-	)
-	if err != nil {
+	row := aiAnalysisRecordRow{
+		InstanceID:   record.InstanceID,
+		AnalysisType: record.AnalysisType,
+		InputJSON:    record.InputJSON,
+		OutputJSON:   record.OutputJSON,
+		Confidence:   record.Confidence,
+	}
+	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
 		return fmt.Errorf("insert ai analysis record: %w", err)
 	}
-	id, err := result.LastInsertId()
-	if err != nil {
-		return err
-	}
-	record.ID = id
+	record.ID = row.ID
+	record.CreatedAt = row.CreatedAt
 	return nil
 }
 
 // DeleteOldRecords removes records older than the given time.
 func (r *AIAnalysisRepository) DeleteOldRecords(ctx context.Context, before time.Time) (int64, error) {
-	result, err := r.db.ExecContext(ctx,
-		`DELETE FROM ai_analysis_record WHERE created_at < ?`, before,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("delete old ai analysis records: %w", err)
+	result := r.db.WithContext(ctx).Where("created_at < ?", before).Delete(&aiAnalysisRecordRow{})
+	if result.Error != nil {
+		return 0, fmt.Errorf("delete old ai analysis records: %w", result.Error)
 	}
-	return result.RowsAffected()
+	return result.RowsAffected, nil
 }

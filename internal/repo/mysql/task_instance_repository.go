@@ -2,52 +2,31 @@ package mysql
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"time"
 
 	"github.com/example/go-ai-scheduler/internal/model"
+	"gorm.io/gorm"
 )
 
 // TaskInstanceRepository persists task instances in MySQL.
 type TaskInstanceRepository struct {
-	db *sql.DB
+	db *gorm.DB
 }
 
 // NewTaskInstanceRepository creates a TaskInstanceRepository.
-func NewTaskInstanceRepository(db *sql.DB) *TaskInstanceRepository {
+func NewTaskInstanceRepository(db *gorm.DB) *TaskInstanceRepository {
 	return &TaskInstanceRepository{db: db}
 }
 
 // CreateInstance inserts a task instance row.
 func (r *TaskInstanceRepository) CreateInstance(ctx context.Context, instance *model.TaskInstance) error {
-	const query = `
-		INSERT INTO task_instance (
-			task_id, schedule_instance_id, trigger_time, dispatch_time, started_at, finished_at, worker_id,
-			status, retry_count, error_code, error_message, trace_id, next_retry_time
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`
-	result, err := r.db.ExecContext(ctx, query,
-		instance.TaskID,
-		instance.ScheduleInstanceID,
-		instance.TriggerTime,
-		timeOrNull(instance.DispatchTime),
-		instance.WorkerID,
-		instance.Status,
-		instance.RetryCount,
-		instance.ErrorCode,
-		instance.ErrorMessage,
-		instance.TraceID,
-		timeOrNull(instance.NextRetryTime),
-	)
-	if err != nil {
+	row := taskInstanceToRow(instance)
+	row.ID = 0
+	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
 		return fmt.Errorf("insert task instance: %w", err)
 	}
-	id, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("read inserted task instance id: %w", err)
-	}
-	fresh, err := r.GetInstance(ctx, id)
+	fresh, err := r.GetInstance(ctx, row.ID)
 	if err != nil {
 		return err
 	}
@@ -57,134 +36,96 @@ func (r *TaskInstanceRepository) CreateInstance(ctx context.Context, instance *m
 
 // GetInstance loads one task instance by id.
 func (r *TaskInstanceRepository) GetInstance(ctx context.Context, instanceID int64) (*model.TaskInstance, error) {
-	const query = `
-		SELECT id, task_id, schedule_instance_id, trigger_time, dispatch_time, started_at, finished_at, worker_id,
-		       status, retry_count, error_code, error_message, analysis_json, trace_id, next_retry_time, created_at, updated_at
-		FROM task_instance
-		WHERE id = ?
-	`
-	row := r.db.QueryRowContext(ctx, query, instanceID)
-	return scanTaskInstance(row)
+	var row taskInstanceRow
+	if err := r.db.WithContext(ctx).First(&row, instanceID).Error; err != nil {
+		return nil, fmt.Errorf("get task instance: %w", err)
+	}
+	return rowToTaskInstance(&row), nil
 }
 
 // GetInstanceByScheduleID loads one task instance by schedule id.
 func (r *TaskInstanceRepository) GetInstanceByScheduleID(ctx context.Context, scheduleID string) (*model.TaskInstance, error) {
-	const query = `
-		SELECT id, task_id, schedule_instance_id, trigger_time, dispatch_time, started_at, finished_at, worker_id,
-		       status, retry_count, error_code, error_message, analysis_json, trace_id, next_retry_time, created_at, updated_at
-		FROM task_instance
-		WHERE schedule_instance_id = ?
-	`
-	row := r.db.QueryRowContext(ctx, query, scheduleID)
-	return scanTaskInstance(row)
+	var row taskInstanceRow
+	if err := r.db.WithContext(ctx).Where("schedule_instance_id = ?", scheduleID).First(&row).Error; err != nil {
+		return nil, fmt.Errorf("get task instance by schedule id: %w", err)
+	}
+	return rowToTaskInstance(&row), nil
 }
 
 // ListInstances returns all task instances.
 func (r *TaskInstanceRepository) ListInstances(ctx context.Context) ([]*model.TaskInstance, error) {
-	const query = `
-		SELECT id, task_id, schedule_instance_id, trigger_time, dispatch_time, started_at, finished_at, worker_id,
-		       status, retry_count, error_code, error_message, analysis_json, trace_id, next_retry_time, created_at, updated_at
-		FROM task_instance
-		ORDER BY id
-	`
-	rows, err := r.db.QueryContext(ctx, query)
-	if err != nil {
+	var rows []taskInstanceRow
+	if err := r.db.WithContext(ctx).Order("id").Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("list task instances: %w", err)
 	}
-	defer rows.Close()
-	return scanTaskInstances(rows)
+	return mapTaskInstances(rows), nil
 }
 
 // ListInstancesByTaskID returns all task instances for a given task.
 func (r *TaskInstanceRepository) ListInstancesByTaskID(ctx context.Context, taskID int64) ([]*model.TaskInstance, error) {
-	const query = `
-		SELECT id, task_id, schedule_instance_id, trigger_time, dispatch_time, started_at, finished_at, worker_id,
-		       status, retry_count, error_code, error_message, analysis_json, trace_id, next_retry_time, created_at, updated_at
-		FROM task_instance
-		WHERE task_id = ?
-		ORDER BY created_at
-	`
-	rows, err := r.db.QueryContext(ctx, query, taskID)
-	if err != nil {
+	var rows []taskInstanceRow
+	if err := r.db.WithContext(ctx).Where("task_id = ?", taskID).Order("created_at").Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("list instances by task id: %w", err)
 	}
-	defer rows.Close()
-	return scanTaskInstances(rows)
+	return mapTaskInstances(rows), nil
 }
 
 // ListInstancesByTimeRange returns task instances within a time window.
 func (r *TaskInstanceRepository) ListInstancesByTimeRange(ctx context.Context, from, to time.Time, limit, offset int) ([]*model.TaskInstance, error) {
-	const query = `
-		SELECT id, task_id, schedule_instance_id, trigger_time, dispatch_time, started_at, finished_at, worker_id,
-		       status, retry_count, error_code, error_message, analysis_json, trace_id, next_retry_time, created_at, updated_at
-		FROM task_instance
-		WHERE created_at >= ? AND created_at <= ?
-		ORDER BY created_at DESC
-		LIMIT ? OFFSET ?
-	`
-	rows, err := r.db.QueryContext(ctx, query, from, to, limit, offset)
-	if err != nil {
+	query := r.db.WithContext(ctx).Where("created_at >= ? AND created_at <= ?", from, to).Order("created_at DESC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	if offset > 0 {
+		query = query.Offset(offset)
+	}
+	var rows []taskInstanceRow
+	if err := query.Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("list instances by time range: %w", err)
 	}
-	defer rows.Close()
-	return scanTaskInstances(rows)
+	return mapTaskInstances(rows), nil
 }
 
 // ListInstancesByStatus returns task instances filtered by status.
 func (r *TaskInstanceRepository) ListInstancesByStatus(ctx context.Context, status string, limit int) ([]*model.TaskInstance, error) {
-	const query = `
-		SELECT id, task_id, schedule_instance_id, trigger_time, dispatch_time, started_at, finished_at, worker_id,
-		       status, retry_count, error_code, error_message, analysis_json, trace_id, next_retry_time, created_at, updated_at
-		FROM task_instance
-		WHERE status = ?
-		ORDER BY created_at
-		LIMIT ?
-	`
-	rows, err := r.db.QueryContext(ctx, query, status, limit)
-	if err != nil {
+	query := r.db.WithContext(ctx).Where("status = ?", status).Order("created_at")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	var rows []taskInstanceRow
+	if err := query.Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("list task instances by status: %w", err)
 	}
-	defer rows.Close()
-	return scanTaskInstances(rows)
+	return mapTaskInstances(rows), nil
 }
 
 // ListDueRetryInstances returns retry_waiting instances whose next_retry_time has passed.
 func (r *TaskInstanceRepository) ListDueRetryInstances(ctx context.Context, cutoff time.Time, limit int) ([]*model.TaskInstance, error) {
-	const query = `
-		SELECT id, task_id, schedule_instance_id, trigger_time, dispatch_time, started_at, finished_at, worker_id,
-		       status, retry_count, error_code, error_message, analysis_json, trace_id, next_retry_time, created_at, updated_at
-		FROM task_instance
-		WHERE status = 'retry_waiting' AND (next_retry_time IS NULL OR next_retry_time <= ?)
-		ORDER BY created_at
-		LIMIT ?
-	`
-	rows, err := r.db.QueryContext(ctx, query, cutoff, limit)
-	if err != nil {
+	query := r.db.WithContext(ctx).
+		Where("status = ? AND (next_retry_time IS NULL OR next_retry_time <= ?)", "retry_waiting", cutoff).
+		Order("created_at")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	var rows []taskInstanceRow
+	if err := query.Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("list due retry instances: %w", err)
 	}
-	defer rows.Close()
-	return scanTaskInstances(rows)
+	return mapTaskInstances(rows), nil
 }
 
 // CountInstancesByStatus returns the count of instances with the given status.
 func (r *TaskInstanceRepository) CountInstancesByStatus(ctx context.Context, status string) (int, error) {
-	var count int
-	err := r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM task_instance WHERE status = ?`, status,
-	).Scan(&count)
-	if err != nil {
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&taskInstanceRow{}).Where("status = ?", status).Count(&count).Error; err != nil {
 		return 0, fmt.Errorf("count instances by status: %w", err)
 	}
-	return count, nil
+	return int(count), nil
 }
 
 // UpdateInstanceStatus updates only the status field.
 func (r *TaskInstanceRepository) UpdateInstanceStatus(ctx context.Context, instanceID int64, status string) error {
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE task_instance SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		status, instanceID,
-	)
-	if err != nil {
+	if err := r.db.WithContext(ctx).Model(&taskInstanceRow{}).Where("id = ?", instanceID).Updates(map[string]any{"status": status}).Error; err != nil {
 		return fmt.Errorf("update task instance status: %w", err)
 	}
 	return nil
@@ -196,11 +137,11 @@ func (r *TaskInstanceRepository) UpdateInstanceDispatch(ctx context.Context, ins
 	if err != nil {
 		return err
 	}
-	_, err = r.db.ExecContext(ctx,
-		`UPDATE task_instance SET worker_id = ?, dispatch_time = ?, status = 'dispatched', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		workerID, parsedDispatchTime, instanceID,
-	)
-	if err != nil {
+	if err := r.db.WithContext(ctx).Model(&taskInstanceRow{}).Where("id = ?", instanceID).Updates(map[string]any{
+		"worker_id":     workerID,
+		"dispatch_time": parsedDispatchTime,
+		"status":        "dispatched",
+	}).Error; err != nil {
 		return fmt.Errorf("update task instance dispatch: %w", err)
 	}
 	return nil
@@ -208,80 +149,19 @@ func (r *TaskInstanceRepository) UpdateInstanceDispatch(ctx context.Context, ins
 
 // UpdateInstanceResult updates the final result state.
 func (r *TaskInstanceRepository) UpdateInstanceResult(ctx context.Context, scheduleID string, status string, errorCode string, errorMessage string) error {
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE task_instance SET status = ?, error_code = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP WHERE schedule_instance_id = ?`,
-		status, errorCode, errorMessage, scheduleID,
-	)
-	if err != nil {
+	if err := r.db.WithContext(ctx).Model(&taskInstanceRow{}).Where("schedule_instance_id = ?", scheduleID).Updates(map[string]any{
+		"status":        status,
+		"error_code":    errorCode,
+		"error_message": errorMessage,
+	}).Error; err != nil {
 		return fmt.Errorf("update task instance result: %w", err)
 	}
 	return nil
 }
 
-func scanTaskInstance(scanner interface{ Scan(dest ...any) error }) (*model.TaskInstance, error) {
-	var instance model.TaskInstance
-	var dispatchTime sql.NullTime
-	var startedAt sql.NullTime
-	var finishedAt sql.NullTime
-	var nextRetryTime sql.NullTime
-	if err := scanner.Scan(
-		&instance.ID,
-		&instance.TaskID,
-		&instance.ScheduleInstanceID,
-		&instance.TriggerTime,
-		&dispatchTime,
-		&startedAt,
-		&finishedAt,
-		&instance.WorkerID,
-		&instance.Status,
-		&instance.RetryCount,
-		&instance.ErrorCode,
-		&instance.ErrorMessage,
-		&instance.AnalysisJSON,
-		&instance.TraceID,
-		&nextRetryTime,
-		&instance.CreatedAt,
-		&instance.UpdatedAt,
-	); err != nil {
-		return nil, fmt.Errorf("scan task instance: %w", err)
-	}
-	if dispatchTime.Valid {
-		instance.DispatchTime = dispatchTime.Time
-	}
-	if startedAt.Valid {
-		instance.StartedAt = startedAt.Time
-	}
-	if finishedAt.Valid {
-		instance.FinishedAt = finishedAt.Time
-	}
-	if nextRetryTime.Valid {
-		instance.NextRetryTime = nextRetryTime.Time
-	}
-	return &instance, nil
-}
-
-func scanTaskInstances(rows *sql.Rows) ([]*model.TaskInstance, error) {
-	instances := make([]*model.TaskInstance, 0)
-	for rows.Next() {
-		instance, err := scanTaskInstance(rows)
-		if err != nil {
-			return nil, err
-		}
-		instances = append(instances, instance)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate task instances: %w", err)
-	}
-	return instances, nil
-}
-
 // UpdateInstanceAnalysis stores the AI analysis result for a failed instance.
 func (r *TaskInstanceRepository) UpdateInstanceAnalysis(ctx context.Context, scheduleID string, analysisJSON string) error {
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE task_instance SET analysis_json = ?, updated_at = CURRENT_TIMESTAMP WHERE schedule_instance_id = ?`,
-		analysisJSON, scheduleID,
-	)
-	if err != nil {
+	if err := r.db.WithContext(ctx).Model(&taskInstanceRow{}).Where("schedule_instance_id = ?", scheduleID).Update("analysis_json", analysisJSON).Error; err != nil {
 		return fmt.Errorf("update instance analysis: %w", err)
 	}
 	return nil
@@ -289,23 +169,30 @@ func (r *TaskInstanceRepository) UpdateInstanceAnalysis(ctx context.Context, sch
 
 // UpdateInstanceTimestamps stores execution start and finish times.
 func (r *TaskInstanceRepository) UpdateInstanceTimestamps(ctx context.Context, scheduleID string, startedAt, finishedAt time.Time) error {
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE task_instance SET started_at = ?, finished_at = ?, updated_at = CURRENT_TIMESTAMP WHERE schedule_instance_id = ?`,
-		timeOrNull(startedAt), timeOrNull(finishedAt), scheduleID,
-	)
-	if err != nil {
+	if err := r.db.WithContext(ctx).Model(&taskInstanceRow{}).Where("schedule_instance_id = ?", scheduleID).Updates(map[string]any{
+		"started_at":  timeOrNil(startedAt),
+		"finished_at": timeOrNil(finishedAt),
+	}).Error; err != nil {
 		return fmt.Errorf("update instance timestamps: %w", err)
 	}
 	return nil
 }
 
-func parseDispatchTime(value string) (sql.NullTime, error) {
+func parseDispatchTime(value string) (*time.Time, error) {
 	if value == "" {
-		return sql.NullTime{}, nil
+		return nil, nil
 	}
 	parsed, err := time.Parse(time.RFC3339Nano, value)
 	if err != nil {
-		return sql.NullTime{}, fmt.Errorf("parse dispatch time: %w", err)
+		return nil, fmt.Errorf("parse dispatch time: %w", err)
 	}
-	return sql.NullTime{Time: parsed, Valid: true}, nil
+	return &parsed, nil
+}
+
+func mapTaskInstances(rows []taskInstanceRow) []*model.TaskInstance {
+	instances := make([]*model.TaskInstance, 0, len(rows))
+	for i := range rows {
+		instances = append(instances, rowToTaskInstance(&rows[i]))
+	}
+	return instances
 }
