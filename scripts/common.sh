@@ -118,3 +118,7 @@ go_with_proxy_fallback() {
       return 0
     fi
     last_rc=$?
+  done
+
+  return "$last_rc"
+}
