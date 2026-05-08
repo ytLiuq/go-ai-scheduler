@@ -8,14 +8,13 @@ if [[ ! -f ".env.ai-service" ]]; then
 fi
 
 load_env
+setup_go_env
 
 export REPO_BACKEND="${REPO_BACKEND:-mysql}"
 export MYSQL_DSN="${MYSQL_DSN:-root:root@tcp(127.0.0.1:3306)/go_ai_scheduler?parseTime=true}"
 export AUTO_MIGRATE=true
 export MIGRATION_DIR="${MIGRATION_DIR:-migrations}"
 export REDIS_ADDR="${REDIS_ADDR:-127.0.0.1:6379}"
-export GOCACHE="${GOCACHE:-/tmp/go-build-cache}"
-export GOMODCACHE="${GOMODCACHE:-/tmp/go-mod-cache}"
 
 require_mysql
 
@@ -35,14 +34,14 @@ ensure_dependency "redis" "127.0.0.1" "6379" "redis"
 ensure_dependency "etcd" "127.0.0.1" "2379" "etcd"
 
 echo "Warming Go module and build caches..."
-go mod download
+go_with_proxy_fallback go mod download
 
 RUN_BIN_DIR="$(mktemp -d /tmp/go-ai-scheduler-run.XXXXXX)"
 echo "Building local service binaries into ${RUN_BIN_DIR}..."
-go build -o "${RUN_BIN_DIR}/ai-service" ./cmd/ai-service
-go build -o "${RUN_BIN_DIR}/scheduler" ./cmd/scheduler
-go build -o "${RUN_BIN_DIR}/api" ./cmd/api
-go build -o "${RUN_BIN_DIR}/worker" ./cmd/worker
+go_with_proxy_fallback go build -o "${RUN_BIN_DIR}/ai-service" ./cmd/ai-service
+go_with_proxy_fallback go build -o "${RUN_BIN_DIR}/scheduler" ./cmd/scheduler
+go_with_proxy_fallback go build -o "${RUN_BIN_DIR}/api" ./cmd/api
+go_with_proxy_fallback go build -o "${RUN_BIN_DIR}/worker" ./cmd/worker
 
 echo "Starting ai-service on :8083..."
 env APP_HTTP_ADDR=:8083 "${RUN_BIN_DIR}/ai-service" &
