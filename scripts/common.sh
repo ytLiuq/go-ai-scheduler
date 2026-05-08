@@ -92,3 +92,29 @@ ensure_dependency() {
   docker compose -f deployments/docker-compose/docker-compose.yml up -d "${compose_service}"
   wait_for_tcp "${name}" "${host}" "${port}"
 }
+
+setup_go_env() {
+  export GOCACHE="${GOCACHE:-/tmp/go-build-cache}"
+  export GOMODCACHE="${GOMODCACHE:-/tmp/go-mod-cache}"
+  export GOPROXY_CANDIDATES="${GOPROXY_CANDIDATES:-https://goproxy.cn,direct;${GOPROXY:-https://proxy.golang.org,direct};direct}"
+}
+
+go_with_proxy_fallback() {
+  local cmd=("$@")
+  local original_ifs="$IFS"
+  IFS=';'
+  read -r -a proxies <<< "${GOPROXY_CANDIDATES}"
+  IFS="$original_ifs"
+
+  local proxy
+  local last_rc=0
+  for proxy in "${proxies[@]}"; do
+    proxy="${proxy#"${proxy%%[![:space:]]*}"}"
+    proxy="${proxy%"${proxy##*[![:space:]]}"}"
+    [[ -z "$proxy" ]] && continue
+
+    echo "Using GOPROXY=${proxy}"
+    if GOPROXY="$proxy" "${cmd[@]}"; then
+      return 0
+    fi
+    last_rc=$?
